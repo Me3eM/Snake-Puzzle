@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Snake Puzzle</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+  <section id="screen-menu" class="screen">
+    <h1 class="title">🐍 Snake Puzzle</h1>
+    <p class="subtitle">Führe die Schlange durch jedes Level und friss alle Punkte, ohne gegen eine Wand, ein Hindernis oder dich selbst zu fahren.</p>
+    <div class="menu-buttons">
+      <button id="btn-continue" class="btn btn-primary">Weiterspielen</button>
+      <button id="btn-levels" class="btn">Level-Auswahl</button>
+    </div>
+  </section>
+
+  <section id="screen-levels" class="screen hidden">
+    <h2>Level-Auswahl</h2>
+    <div id="level-grid" class="level-grid"></div>
+    <button id="btn-back-menu" class="btn btn-ghost">Zurück</button>
+  </section>
+
+  <section id="screen-game" class="screen hidden">
+    <header class="hud">
+      <button id="btn-pause" class="icon-btn" aria-label="Pause">⏸</button>
+      <div class="hud-info">
+        <span id="hud-level-name">Level</span>
+        <span id="hud-progress">0 / 0</span>
+      </div>
+      <span id="hud-attempts">Versuch 1</span>
+    </header>
+
+    <div class="canvas-wrap">
+      <canvas id="game-canvas"></canvas>
+
+      <div id="overlay-pause" class="overlay hidden">
+        <div class="overlay-card">
+          <h3>Pause</h3>
+          <button id="btn-resume" class="btn btn-primary">Fortsetzen</button>
+          <button id="btn-restart-pause" class="btn">Level neu starten</button>
+          <button id="btn-menu-pause" class="btn btn-ghost">Level-Auswahl</button>
+        </div>
+      </div>
+
+      <div id="overlay-win" class="overlay hidden">
+        <div class="overlay-card">
+          <h3>Level geschafft!</h3>
+          <div id="win-stars" class="stars"></div>
+          <button id="btn-next-level" class="btn btn-primary">Nächstes Level</button>
+          <button id="btn-menu-win" class="btn btn-ghost">Level-Auswahl</button>
+        </div>
+      </div>
+
+      <div id="overlay-fail" class="overlay hidden">
+        <div class="overlay-card">
+          <h3>Erwischt!</h3>
+          <p id="fail-attempts" class="fail-attempts"></p>
+          <button id="btn-retry" class="btn btn-primary">Nochmal versuchen</button>
+          <button id="btn-menu-fail" class="btn btn-ghost">Level-Auswahl</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="touch-controls" id="touch-controls">
+      <button data-dir="UP" class="dpad dpad-up" aria-label="Hoch">▲</button>
+      <button data-dir="LEFT" class="dpad dpad-left" aria-label="Links">◀</button>
+      <button data-dir="RIGHT" class="dpad dpad-right" aria-label="Rechts">▶</button>
+      <button data-dir="DOWN" class="dpad dpad-down" aria-label="Runter">▼</button>
+    </div>
+  </section>
+
+</div>
+<script src="js/levels.js"></script>
+<script src="js/game.js"></script>
+</body>
+</html>
