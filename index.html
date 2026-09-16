@@ -11,7 +11,7 @@
 
   <section id="screen-menu" class="screen">
     <h1 class="title">🐍 Snake Puzzle</h1>
-    <p class="subtitle">Führe die Schlange durch jedes Level und friss alle Punkte, ohne gegen eine Wand, ein Hindernis oder dich selbst zu fahren.</p>
+    <p class="subtitle">Zug für Zug: Friss alle Äpfel eines Levels, ohne dich einzusperren, gegen Stacheln zu laufen oder von einem Zahnrad erwischt zu werden. Keine Zeit, keine Eile – nur planen.</p>
     <div class="menu-buttons">
       <button id="btn-continue" class="btn btn-primary">Weiterspielen</button>
       <button id="btn-levels" class="btn">Level-Auswahl</button>
@@ -29,9 +29,13 @@
       <button id="btn-pause" class="icon-btn" aria-label="Pause">⏸</button>
       <div class="hud-info">
         <span id="hud-level-name">Level</span>
-        <span id="hud-progress">0 / 0</span>
+        <span id="hud-progress">0 / 0 Äpfel</span>
+        <span id="hud-attempts">Versuch 1</span>
       </div>
-      <span id="hud-attempts">Versuch 1</span>
+      <div class="hud-tools">
+        <button id="btn-hint" class="icon-btn" aria-label="Tipp" title="Tipp">💡</button>
+        <button id="btn-undo" class="icon-btn" aria-label="Rückgängig" title="Rückgängig">↩</button>
+      </div>
     </header>
 
     <div class="canvas-wrap">
@@ -48,7 +52,7 @@
 
       <div id="overlay-win" class="overlay hidden">
         <div class="overlay-card">
-          <h3>Level geschafft!</h3>
+          <h3>Alle Äpfel gefressen!</h3>
           <div id="win-stars" class="stars"></div>
           <button id="btn-next-level" class="btn btn-primary">Nächstes Level</button>
           <button id="btn-menu-win" class="btn btn-ghost">Level-Auswahl</button>
@@ -57,9 +61,10 @@
 
       <div id="overlay-fail" class="overlay hidden">
         <div class="overlay-card">
-          <h3>Erwischt!</h3>
+          <h3 id="fail-title">Erwischt!</h3>
           <p id="fail-attempts" class="fail-attempts"></p>
-          <button id="btn-retry" class="btn btn-primary">Nochmal versuchen</button>
+          <button id="btn-undo-fail" class="btn btn-primary">Letzten Zug zurücknehmen</button>
+          <button id="btn-retry" class="btn">Level neu starten</button>
           <button id="btn-menu-fail" class="btn btn-ghost">Level-Auswahl</button>
         </div>
       </div>

@@ -6,8 +6,8 @@
     RIGHT: { x: 1, y: 0 },
   };
 
-  const STORAGE_UNLOCKED = 'snakepuzzle_unlocked';
-  const STORAGE_STARS = 'snakepuzzle_stars';
+  const STORAGE_UNLOCKED = 'snakepuzzle_v2_unlocked';
+  const STORAGE_STARS = 'snakepuzzle_v2_stars';
 
   const canvas = document.getElementById('game-canvas');
   const ctx = canvas.getContext('2d');
@@ -28,31 +28,37 @@
   const hudAttempts = document.getElementById('hud-attempts');
   const winStarsEl = document.getElementById('win-stars');
   const failAttemptsEl = document.getElementById('fail-attempts');
+  const failTitleEl = document.getElementById('fail-title');
+  const btnUndo = document.getElementById('btn-undo');
+  const btnUndoFail = document.getElementById('btn-undo-fail');
 
   let cellSize = 22;
   let currentLevelIndex = 0;
   let level = null;
   let wallSet = null;
+  let spikeSet = null;
+
   let snake = [];
   let direction = DIRS.RIGHT;
-  let dirQueue = [];
-  let food = null;
-  let foodEaten = 0;
+  let apples = [];
+  let gears = [];
   let attempts = 1;
-  let running = false;
+  let hintUsed = false;
+  let alive = true;
   let paused = false;
-  let msPerTick = 160;
-  let accumulator = 0;
-  let lastTime = 0;
-  let rafId = null;
+  let undoStack = [];
+
+  let hintPath = null;
+  let hintTimer = null;
+  let spinAngle = 0;
+  let spinRaf = null;
 
   function loadUnlocked() {
     const v = parseInt(localStorage.getItem(STORAGE_UNLOCKED) || '1', 10);
     return Number.isFinite(v) && v > 0 ? v : 1;
   }
   function saveUnlocked(n) {
-    const current = loadUnlocked();
-    localStorage.setItem(STORAGE_UNLOCKED, String(Math.max(current, n)));
+    localStorage.setItem(STORAGE_UNLOCKED, String(Math.max(loadUnlocked(), n)));
   }
   function loadStars() {
     try {
@@ -93,9 +99,7 @@
         '<span class="num">' + (i + 1) + '</span>' +
         '<span class="name">' + lvl.name + '</span>' +
         '<span class="stars-row">' + starRow(starCount) + '</span>';
-      if (!locked) {
-        card.addEventListener('click', () => startLevel(i));
-      }
+      if (!locked) card.addEventListener('click', () => startLevel(i));
       levelGridEl.appendChild(card);
     });
   }
@@ -108,7 +112,7 @@
 
   function resizeCanvas() {
     const maxW = Math.min(window.innerWidth - 32, 640);
-    const maxH = Math.min(window.innerHeight - 220, 640);
+    const maxH = Math.min(window.innerHeight - 240, 640);
     cellSize = Math.max(10, Math.floor(Math.min(maxW / level.cols, maxH / level.rows)));
     canvas.width = cellSize * level.cols;
     canvas.height = cellSize * level.rows;
@@ -121,152 +125,371 @@
     setupLevelState();
     showScreen('game');
     resizeCanvas();
-    resumeLoop();
+    startSpin();
+    draw();
   }
 
   function setupLevelState() {
     wallSet = new Set(level.walls.map((w) => w[0] + ',' + w[1]));
+    spikeSet = new Set((level.spikes || []).map((s) => s[0] + ',' + s[1]));
     const s = level.start;
     direction = DIRS[s.dir];
     const back = { x: -direction.x, y: -direction.y };
-    snake = [
-      { x: s.x, y: s.y },
-      { x: s.x + back.x, y: s.y + back.y },
-      { x: s.x + back.x * 2, y: s.y + back.y * 2 },
-    ];
-    dirQueue = [];
-    foodEaten = 0;
-    msPerTick = 1000 / level.speed;
-    accumulator = 0;
-    food = spawnFood();
+    snake = [];
+    for (let i = 0; i < s.length; i++) {
+      snake.push({ x: s.x + back.x * i, y: s.y + back.y * i });
+    }
+    apples = level.apples.map((a) => ({ x: a[0], y: a[1] }));
+    gears = (level.gears || []).map((g) => ({ path: g.path, idx: 0, step: 1 }));
+    undoStack = [];
+    hintUsed = false;
+    alive = true;
     paused = false;
+    clearHint();
     hideOverlays();
     updateHud();
   }
 
   function updateHud() {
     hudLevelName.textContent = 'Level ' + (currentLevelIndex + 1) + ' – ' + level.name;
-    hudProgress.textContent = foodEaten + ' / ' + level.target;
+    hudProgress.textContent = apples.length + ' Äpfel übrig';
     hudAttempts.textContent = 'Versuch ' + attempts;
   }
 
-  function spawnFood() {
-    const occupied = new Set(snake.map((p) => p.x + ',' + p.y));
-    const free = [];
-    for (let y = 1; y < level.rows - 1; y++) {
-      for (let x = 1; x < level.cols - 1; x++) {
-        const key = x + ',' + y;
-        if (!wallSet.has(key) && !occupied.has(key)) free.push({ x, y });
+  function snapshot() {
+    return {
+      snake: snake.map((p) => ({ x: p.x, y: p.y })),
+      direction: { x: direction.x, y: direction.y },
+      apples: apples.map((p) => ({ x: p.x, y: p.y })),
+      gears: gears.map((g) => ({ path: g.path, idx: g.idx, step: g.step })),
+    };
+  }
+
+  function restoreSnapshot(snap) {
+    snake = snap.snake.map((p) => ({ x: p.x, y: p.y }));
+    direction = { x: snap.direction.x, y: snap.direction.y };
+    apples = snap.apples.map((p) => ({ x: p.x, y: p.y }));
+    gears = snap.gears.map((g) => ({ path: g.path, idx: g.idx, step: g.step }));
+  }
+
+  function cellsEqual(a, b) {
+    return a.x === b.x && a.y === b.y;
+  }
+
+  function bodyBlocks(pos) {
+    for (let i = 0; i < snake.length - 1; i++) {
+      if (cellsEqual(snake[i], pos)) return true;
+    }
+    return false;
+  }
+
+  function gearCellAt(g) {
+    return g.path[g.idx];
+  }
+
+  function advanceGears() {
+    gears.forEach((g) => {
+      if (g.path.length < 2) return;
+      let next = g.idx + g.step;
+      if (next >= g.path.length) {
+        g.step = -1;
+        next = g.idx + g.step;
+      } else if (next < 0) {
+        g.step = 1;
+        next = g.idx + g.step;
       }
-    }
-    if (free.length === 0) return null;
-    return free[Math.floor(Math.random() * free.length)];
+      g.idx = next;
+    });
   }
 
-  function resumeLoop() {
-    running = true;
-    lastTime = performance.now();
-    if (rafId) cancelAnimationFrame(rafId);
-    rafId = requestAnimationFrame(loop);
+  function gearHitsSnake() {
+    return gears.some((g) => {
+      const cell = { x: gearCellAt(g)[0], y: gearCellAt(g)[1] };
+      return snake.some((seg) => cellsEqual(seg, cell));
+    });
   }
 
-  function stopLoop() {
-    running = false;
-    if (rafId) cancelAnimationFrame(rafId);
-    rafId = null;
-  }
+  function attemptMove(dirName) {
+    if (!alive || paused || screens.game.classList.contains('hidden')) return;
 
-  function loop(time) {
-    if (!running || paused) return;
-    const dt = time - lastTime;
-    lastTime = time;
-    accumulator += dt;
-    while (accumulator >= msPerTick) {
-      accumulator -= msPerTick;
-      tick();
-      if (!running || paused) break;
-    }
-    draw();
-    if (running && !paused) rafId = requestAnimationFrame(loop);
-  }
-
-  function tick() {
-    if (dirQueue.length) {
-      const next = dirQueue.shift();
-      if (next.x !== -direction.x || next.y !== -direction.y) {
-        direction = next;
-      }
-    }
+    const dir = DIRS[dirName];
     const head = snake[0];
-    const newHead = { x: head.x + direction.x, y: head.y + direction.y };
+    const newHead = { x: head.x + dir.x, y: head.y + dir.y };
     const key = newHead.x + ',' + newHead.y;
 
-    if (wallSet.has(key) || collidesWithSnake(newHead)) {
-      onFail();
-      return;
-    }
+    if (newHead.x < 0 || newHead.y < 0 || newHead.x >= level.cols || newHead.y >= level.rows) return;
+    if (wallSet.has(key)) return;
+    if (bodyBlocks(newHead)) return;
+
+    undoStack.push(snapshot());
+    clearHint();
+
+    const ateAppleIdx = apples.findIndex((a) => cellsEqual(a, newHead));
+    const hitSpike = spikeSet.has(key);
+    const hitGear = gears.some((g) => {
+      const c = gearCellAt(g);
+      return c[0] === newHead.x && c[1] === newHead.y;
+    });
 
     snake.unshift(newHead);
-
-    if (food && newHead.x === food.x && newHead.y === food.y) {
-      foodEaten++;
-      updateHud();
-      if (foodEaten >= level.target) {
-        onWin();
-        return;
-      }
-      food = spawnFood();
+    direction = dir;
+    if (ateAppleIdx >= 0) {
+      apples.splice(ateAppleIdx, 1);
     } else {
       snake.pop();
     }
+
+    if (hitSpike || hitGear) {
+      draw();
+      onFail(hitSpike ? 'Autsch! Das war ein Stachel.' : 'Erwischt vom Zahnrad!');
+      return;
+    }
+
+    advanceGears();
+    if (gearHitsSnake()) {
+      draw();
+      onFail('Erwischt vom Zahnrad!');
+      return;
+    }
+
+    updateHud();
+    draw();
+
+    if (apples.length === 0) {
+      onWin();
+    }
   }
 
-  function collidesWithSnake(pos) {
-    for (let i = 0; i < snake.length - 1; i++) {
-      if (snake[i].x === pos.x && snake[i].y === pos.y) return true;
+  function onWin() {
+    alive = false;
+    const stars = attempts === 1 ? 3 : attempts <= 3 ? 2 : 1;
+    const finalStars = hintUsed ? Math.min(stars, 2) : stars;
+    saveStars(currentLevelIndex, finalStars);
+    saveUnlocked(currentLevelIndex + 2);
+    winStarsEl.innerHTML = [0, 1, 2]
+      .map((i) => '<span class="' + (i < finalStars ? 'filled' : '') + '">★</span>')
+      .join('');
+    const hasNext = currentLevelIndex + 1 < LEVELS.length;
+    document.getElementById('btn-next-level').style.display = hasNext ? 'block' : 'none';
+    showOverlay('win');
+  }
+
+  function onFail(message) {
+    alive = false;
+    failTitleEl.textContent = message || 'Erwischt!';
+    failAttemptsEl.textContent = 'Versuch ' + attempts + ' beendet';
+    btnUndoFail.style.display = undoStack.length ? 'block' : 'none';
+    showOverlay('fail');
+  }
+
+  function retryLevel() {
+    attempts++;
+    setupLevelState();
+    draw();
+  }
+
+  function undoMove() {
+    if (!undoStack.length) return;
+    const snap = undoStack.pop();
+    restoreSnapshot(snap);
+    alive = true;
+    hideOverlays();
+    updateHud();
+    clearHint();
+    draw();
+  }
+
+  function clearHint() {
+    hintPath = null;
+    if (hintTimer) {
+      clearTimeout(hintTimer);
+      hintTimer = null;
     }
-    return false;
+  }
+
+  function showHint() {
+    if (!alive || paused) return;
+    const path = findHintPath();
+    if (!path) return;
+    hintUsed = true;
+    hintPath = path;
+    draw();
+    if (hintTimer) clearTimeout(hintTimer);
+    hintTimer = setTimeout(() => {
+      hintPath = null;
+      draw();
+    }, 1800);
+  }
+
+  function findHintPath() {
+    if (!apples.length) return null;
+    const start = snake[0];
+    const startKey = start.x + ',' + start.y;
+    const blocked = new Set();
+    for (let i = 0; i < snake.length - 1; i++) blocked.add(snake[i].x + ',' + snake[i].y);
+    gears.forEach((g) => {
+      const c = gearCellAt(g);
+      blocked.add(c[0] + ',' + c[1]);
+    });
+
+    const queue = [start];
+    const cameFrom = new Map();
+    const visited = new Set([startKey]);
+    let target = null;
+
+    while (queue.length) {
+      const cur = queue.shift();
+      const curKey = cur.x + ',' + cur.y;
+      if (apples.some((a) => a.x === cur.x && a.y === cur.y) && curKey !== startKey) {
+        target = cur;
+        break;
+      }
+      const neighbors = [
+        { x: cur.x + 1, y: cur.y },
+        { x: cur.x - 1, y: cur.y },
+        { x: cur.x, y: cur.y + 1 },
+        { x: cur.x, y: cur.y - 1 },
+      ];
+      for (const n of neighbors) {
+        const nk = n.x + ',' + n.y;
+        if (visited.has(nk)) continue;
+        if (n.x < 0 || n.y < 0 || n.x >= level.cols || n.y >= level.rows) continue;
+        if (wallSet.has(nk) || spikeSet.has(nk) || blocked.has(nk)) continue;
+        visited.add(nk);
+        cameFrom.set(nk, cur);
+        queue.push(n);
+      }
+    }
+
+    if (!target) return null;
+    const path = [target];
+    let cur = target;
+    while (cur.x !== start.x || cur.y !== start.y) {
+      cur = cameFrom.get(cur.x + ',' + cur.y);
+      path.unshift(cur);
+    }
+    return path;
   }
 
   function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    ctx.fillStyle = '#1b2430';
     wallSet.forEach((key) => {
       const [x, y] = key.split(',').map(Number);
-      drawCell(x, y, '#2a3543');
+      drawWoodBlock(x, y);
     });
 
-    if (food) {
-      const cx = food.x * cellSize + cellSize / 2;
-      const cy = food.y * cellSize + cellSize / 2;
-      const r = cellSize * 0.32;
-      const grad = ctx.createRadialGradient(cx, cy, 1, cx, cy, r);
-      grad.addColorStop(0, '#fde68a');
-      grad.addColorStop(1, '#f59e0b');
-      ctx.fillStyle = grad;
-      ctx.beginPath();
-      ctx.arc(cx, cy, r, 0, Math.PI * 2);
-      ctx.fill();
+    spikeSet.forEach((key) => {
+      const [x, y] = key.split(',').map(Number);
+      drawSpike(x, y);
+    });
+
+    if (hintPath) {
+      ctx.fillStyle = 'rgba(250, 204, 21, 0.28)';
+      hintPath.forEach((p) => {
+        ctx.fillRect(p.x * cellSize, p.y * cellSize, cellSize, cellSize);
+      });
     }
+
+    apples.forEach((a) => drawApple(a.x, a.y));
+    gears.forEach((g) => {
+      const c = gearCellAt(g);
+      drawGear(c[0], c[1]);
+    });
 
     for (let i = snake.length - 1; i >= 0; i--) {
       const seg = snake[i];
       const isHead = i === 0;
-      ctx.fillStyle = isHead ? '#4ade80' : '#22c55e';
-      drawCell(seg.x, seg.y, ctx.fillStyle, 4);
+      const color = isHead ? '#4ade80' : '#22c55e';
+      drawCell(seg.x, seg.y, color, 4);
       if (isHead) drawEyes(seg);
     }
   }
 
+  function drawWoodBlock(x, y) {
+    const px = x * cellSize;
+    const py = y * cellSize;
+    const grad = ctx.createLinearGradient(px, py, px, py + cellSize);
+    grad.addColorStop(0, '#a9764a');
+    grad.addColorStop(1, '#6b4423');
+    ctx.fillStyle = grad;
+    roundRect(px + 1, py + 1, cellSize - 2, cellSize - 2, 3);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+    ctx.lineWidth = 1;
+    roundRect(px + 1.5, py + 1.5, cellSize - 3, cellSize - 3, 3);
+    ctx.stroke();
+  }
+
+  function drawSpike(x, y) {
+    const px = x * cellSize;
+    const py = y * cellSize;
+    ctx.fillStyle = '#1b2430';
+    ctx.fillRect(px, py, cellSize, cellSize);
+    ctx.fillStyle = '#cbd5e1';
+    const n = 3;
+    const w = cellSize / n;
+    for (let i = 0; i < n; i++) {
+      const bx = px + i * w;
+      ctx.beginPath();
+      ctx.moveTo(bx + 2, py + cellSize - 3);
+      ctx.lineTo(bx + w / 2, py + cellSize * 0.25);
+      ctx.lineTo(bx + w - 2, py + cellSize - 3);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  function drawApple(x, y) {
+    const cx = x * cellSize + cellSize / 2;
+    const cy = y * cellSize + cellSize / 2;
+    const r = cellSize * 0.32;
+    ctx.fillStyle = '#4ade80';
+    ctx.beginPath();
+    ctx.ellipse(cx + r * 0.3, cy - r * 1.15, r * 0.28, r * 0.16, -0.5, 0, Math.PI * 2);
+    ctx.fill();
+    const grad = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.3, 1, cx, cy, r);
+    grad.addColorStop(0, '#fca5a5');
+    grad.addColorStop(1, '#dc2626');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawGear(x, y) {
+    const cx = x * cellSize + cellSize / 2;
+    const cy = y * cellSize + cellSize / 2;
+    const r = cellSize * 0.34;
+    const teeth = 8;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(spinAngle);
+    ctx.fillStyle = '#94a3b8';
+    for (let i = 0; i < teeth; i++) {
+      const a = (i / teeth) * Math.PI * 2;
+      ctx.save();
+      ctx.rotate(a);
+      ctx.fillRect(-cellSize * 0.06, -r - cellSize * 0.12, cellSize * 0.12, cellSize * 0.14);
+      ctx.restore();
+    }
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#1b2430';
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
   function drawCell(x, y, color, radius) {
     const pad = 1;
-    const r = radius === undefined ? 3 : radius;
     const px = x * cellSize + pad;
     const py = y * cellSize + pad;
     const size = cellSize - pad * 2;
     ctx.fillStyle = color;
-    roundRect(px, py, size, size, r);
+    roundRect(px, py, size, size, radius);
     ctx.fill();
   }
 
@@ -295,40 +518,22 @@
     ctx.beginPath(); ctx.arc(ex2, ey2, r, 0, Math.PI * 2); ctx.fill();
   }
 
-  function onWin() {
-    paused = true;
-    stopLoop();
-    const stars = attempts === 1 ? 3 : attempts <= 3 ? 2 : 1;
-    saveStars(currentLevelIndex, stars);
-    saveUnlocked(currentLevelIndex + 2);
-    winStarsEl.innerHTML = [0, 1, 2]
-      .map((i) => '<span class="' + (i < stars ? 'filled' : '') + '">★</span>')
-      .join('');
-    const hasNext = currentLevelIndex + 1 < LEVELS.length;
-    document.getElementById('btn-next-level').style.display = hasNext ? 'block' : 'none';
-    showOverlay('win');
+  function startSpin() {
+    if (spinRaf) cancelAnimationFrame(spinRaf);
+    const tick = () => {
+      spinAngle += 0.02;
+      if (!screens.game.classList.contains('hidden')) draw();
+      spinRaf = requestAnimationFrame(tick);
+    };
+    spinRaf = requestAnimationFrame(tick);
   }
 
-  function onFail() {
-    paused = true;
-    stopLoop();
-    failAttemptsEl.textContent = 'Versuch ' + attempts + ' beendet';
-    showOverlay('fail');
-  }
-
-  function retryLevel() {
-    attempts++;
-    setupLevelState();
-    resumeLoop();
-  }
-
-  function requestDirection(name) {
-    const d = DIRS[name];
-    if (!d) return;
-    const last = dirQueue.length ? dirQueue[dirQueue.length - 1] : direction;
-    if (d.x === -last.x && d.y === -last.y) return;
-    if (dirQueue.length >= 2) return;
-    dirQueue.push(d);
+  function togglePause() {
+    if (screens.game.classList.contains('hidden')) return;
+    if (!overlays.win.classList.contains('hidden') || !overlays.fail.classList.contains('hidden')) return;
+    paused = !paused;
+    if (paused) showOverlay('pause');
+    else hideOverlays();
   }
 
   document.addEventListener('keydown', (e) => {
@@ -341,18 +546,17 @@
     if (screens.game.classList.contains('hidden')) return;
     if (map[e.code]) {
       e.preventDefault();
-      if (!paused) requestDirection(map[e.code]);
+      attemptMove(map[e.code]);
       return;
     }
-    if (e.code === 'Escape' || e.code === 'KeyP') {
-      togglePause();
-    }
+    if (e.code === 'Escape' || e.code === 'KeyP') togglePause();
+    if (e.code === 'KeyZ' || e.code === 'Backspace') { e.preventDefault(); undoMove(); }
   });
 
   document.querySelectorAll('.dpad').forEach((btn) => {
     const fire = (e) => {
       e.preventDefault();
-      if (!paused) requestDirection(btn.dataset.dir);
+      attemptMove(btn.dataset.dir);
     };
     btn.addEventListener('touchstart', fire, { passive: false });
     btn.addEventListener('mousedown', fire);
@@ -370,26 +574,9 @@
     const dy = t.clientY - touchStart.y;
     touchStart = null;
     if (Math.max(Math.abs(dx), Math.abs(dy)) < 20) return;
-    if (Math.abs(dx) > Math.abs(dy)) {
-      requestDirection(dx > 0 ? 'RIGHT' : 'LEFT');
-    } else {
-      requestDirection(dy > 0 ? 'DOWN' : 'UP');
-    }
+    if (Math.abs(dx) > Math.abs(dy)) attemptMove(dx > 0 ? 'RIGHT' : 'LEFT');
+    else attemptMove(dy > 0 ? 'DOWN' : 'UP');
   }, { passive: true });
-
-  function togglePause() {
-    if (!screens.game.classList.contains('hidden') && overlays.win.classList.contains('hidden') && overlays.fail.classList.contains('hidden')) {
-      if (paused) {
-        paused = false;
-        hideOverlays();
-        resumeLoop();
-      } else {
-        paused = true;
-        stopLoop();
-        showOverlay('pause');
-      }
-    }
-  }
 
   document.getElementById('btn-continue').addEventListener('click', () => {
     const unlocked = loadUnlocked();
@@ -404,12 +591,10 @@
   document.getElementById('btn-pause').addEventListener('click', togglePause);
   document.getElementById('btn-resume').addEventListener('click', togglePause);
   document.getElementById('btn-restart-pause').addEventListener('click', () => {
-    hideOverlays();
     paused = false;
     retryLevel();
   });
   document.getElementById('btn-menu-pause').addEventListener('click', () => {
-    stopLoop();
     buildLevelGrid();
     showScreen('levels');
   });
@@ -428,6 +613,9 @@
     buildLevelGrid();
     showScreen('levels');
   });
+  btnUndoFail.addEventListener('click', undoMove);
+  btnUndo.addEventListener('click', undoMove);
+  document.getElementById('btn-hint').addEventListener('click', showHint);
 
   window.addEventListener('resize', () => {
     if (level && !screens.game.classList.contains('hidden')) {

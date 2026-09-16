@@ -117,7 +117,10 @@ h2 { margin: 8px 0 20px; }
 }
 .hud-info { display: flex; flex-direction: column; align-items: center; font-size: 13px; color: var(--text-dim); }
 #hud-level-name { font-weight: 700; color: var(--text); font-size: 15px; }
-#hud-attempts { font-size: 13px; color: var(--text-dim); min-width: 70px; text-align: right; }
+#hud-attempts { font-size: 12px; color: var(--text-dim); }
+.hud-tools { display: flex; gap: 8px; }
+
+.fail-attempts { color: var(--text-dim); font-size: 13px; margin: 0 0 4px; }
 
 .icon-btn {
   width: 38px;
@@ -171,8 +174,6 @@ h2 { margin: 8px 0 20px; }
 
 .stars { font-size: 32px; letter-spacing: 6px; color: #3a4453; margin-bottom: 6px; }
 .stars .filled { color: var(--warn); }
-
-.fail-attempts { color: var(--text-dim); font-size: 13px; margin: 0 0 4px; }
 
 .touch-controls {
   margin-top: 18px;
