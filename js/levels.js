@@ -1,162 +1,256 @@
-function border(cols, rows) {
-  const cells = [];
-  for (let x = 0; x < cols; x++) {
-    cells.push([x, 0]);
-    cells.push([x, rows - 1]);
-  }
-  for (let y = 0; y < rows; y++) {
-    cells.push([0, y]);
-    cells.push([cols - 1, y]);
-  }
-  return cells;
-}
+// Level-Baukasten: jedes Level ist ein festes "Rohr" (Pfad-Zellen), durch das
+// die Schlange Schritt für Schritt gesteuert wird. Alles außerhalb des Pfads
+// ist Leerraum (Himmel). Stacheln/Sägen auf dem Pfad sind tödlich, Steine
+// blockieren den Weg (sie werden aus dem begehbaren Pfad herausgeschnitten).
 
 function hline(x1, x2, y) {
   const cells = [];
-  for (let x = x1; x <= x2; x++) cells.push([x, y]);
+  const [a, b] = x1 <= x2 ? [x1, x2] : [x2, x1];
+  for (let x = a; x <= b; x++) cells.push([x, y]);
   return cells;
 }
 
 function vline(y1, y2, x) {
   const cells = [];
-  for (let y = y1; y <= y2; y++) cells.push([x, y]);
+  const [a, b] = y1 <= y2 ? [y1, y2] : [y2, y1];
+  for (let y = a; y <= b; y++) cells.push([x, y]);
   return cells;
 }
 
-function points(arr) {
-  return arr.map((p) => [p[0], p[1]]);
+function rect(x1, y1, x2, y2) {
+  const cells = [];
+  for (let y = y1; y <= y2; y++) {
+    for (let x = x1; x <= x2; x++) cells.push([x, y]);
+  }
+  return cells;
 }
 
-function rectHollow(x1, y1, x2, y2, gaps) {
-  gaps = gaps || [];
-  const gapKeys = new Set(gaps.map((g) => g[0] + ',' + g[1]));
+// Kleine Ausweichschlaufe: Hauptreihe bei y (mit Platz für eine Gefahr in der
+// Mitte) plus eine freie Bypass-Reihe darüber (dy=-1) oder darunter (dy=1),
+// verbunden an beiden Enden. Gibt außerdem die Zelle für die Gefahr zurück.
+function dodge(x, y, width, dy) {
+  const x2 = x + width - 1;
+  const hazardX = x + Math.floor(width / 2);
+  const cells = [
+    ...hline(x, x2, y),
+    ...hline(x, x2, y + dy),
+    ...vline(y, y + dy, x),
+    ...vline(y, y + dy, x2),
+  ];
+  return { cells, hazard: [hazardX, y] };
+}
+
+function merge(...groups) {
   const map = new Map();
-  for (let x = x1; x <= x2; x++) {
-    map.set(x + ',' + y1, [x, y1]);
-    map.set(x + ',' + y2, [x, y2]);
-  }
-  for (let y = y1; y <= y2; y++) {
-    map.set(x1 + ',' + y, [x1, y]);
-    map.set(x2 + ',' + y, [x2, y]);
-  }
-  gapKeys.forEach((k) => map.delete(k));
+  groups.forEach((g) => g.forEach(([x, y]) => map.set(x + ',' + y, [x, y])));
   return Array.from(map.values());
 }
 
-function grid(xs, ys) {
-  const cells = [];
-  xs.forEach((x) => ys.forEach((y) => cells.push([x, y])));
-  return cells;
+function subtract(base, remove) {
+  const removeSet = new Set(remove.map(([x, y]) => x + ',' + y));
+  return base.filter(([x, y]) => !removeSet.has(x + ',' + y));
 }
 
-const LEVELS = [
-  {
-    name: 'Einstieg',
-    cols: 22,
-    rows: 14,
-    target: 5,
-    speed: 6,
-    start: { x: 3, y: 2, dir: 'RIGHT' },
-    walls: [
-      ...border(22, 14),
-      ...points([[10, 4], [16, 4], [10, 9], [16, 9], [13, 6]]),
-    ],
-  },
-  {
-    name: 'Kreuzung',
-    cols: 22,
-    rows: 14,
-    target: 6,
-    speed: 6.5,
-    start: { x: 3, y: 2, dir: 'RIGHT' },
-    walls: [
-      ...border(22, 14),
-      ...hline(5, 9, 7),
-      ...hline(12, 16, 7),
-      ...points([[8, 3], [14, 10]]),
-    ],
-  },
-  {
-    name: 'Slalom',
-    cols: 24,
-    rows: 15,
-    target: 7,
-    speed: 7,
-    start: { x: 3, y: 2, dir: 'RIGHT' },
-    walls: [
-      ...border(24, 15),
-      ...vline(2, 9, 8),
-      ...vline(5, 13, 16),
-      ...points([[11, 7]]),
-    ],
-  },
-  {
-    name: 'Kammer',
-    cols: 24,
-    rows: 15,
-    target: 8,
-    speed: 7.5,
-    start: { x: 3, y: 2, dir: 'RIGHT' },
-    walls: [
-      ...border(24, 15),
-      ...rectHollow(8, 4, 17, 11, [[12, 11]]),
-      ...points([[5, 12], [20, 3]]),
-    ],
-  },
-  {
-    name: 'Stelzenfeld',
-    cols: 26,
-    rows: 16,
-    target: 9,
-    speed: 8,
-    start: { x: 3, y: 2, dir: 'RIGHT' },
-    walls: [
-      ...border(26, 16),
-      ...grid([6, 11, 16, 21], [4, 8, 12]),
-    ],
-  },
-  {
-    name: 'Irrgarten',
-    cols: 26,
-    rows: 16,
-    target: 10,
-    speed: 8.5,
-    start: { x: 3, y: 2, dir: 'RIGHT' },
-    walls: [
-      ...border(26, 16),
-      ...vline(2, 9, 7),
-      ...hline(10, 18, 11),
-      ...vline(6, 13, 19),
-      ...points([[13, 4]]),
-    ],
-  },
-  {
-    name: 'Spirale',
-    cols: 28,
-    rows: 17,
-    target: 11,
-    speed: 9,
-    start: { x: 3, y: 2, dir: 'RIGHT' },
-    walls: [
-      ...border(28, 17),
-      ...rectHollow(6, 3, 25, 14, [[25, 8]]),
-      ...rectHollow(9, 5, 22, 12, [[9, 8]]),
-    ],
-  },
-  {
+const LEVELS = [];
+
+// --- Level 1: Erste Schritte (Tutorial, keine Gefahren) ---
+{
+  const path = merge(
+    hline(1, 8, 1),
+    vline(1, 3, 8),
+    hline(3, 8, 3),
+    vline(3, 6, 3),
+    hline(3, 9, 6),
+  );
+  LEVELS.push({
+    name: 'Erste Schritte',
+    start: [1, 1],
+    goal: [9, 6],
+    path,
+    spikes: [],
+    saws: [],
+    blocks: [],
+  });
+}
+
+// --- Level 2: Stachelgang (erste Stachel-Ausweiche) ---
+{
+  const d1 = dodge(4, 2, 5, -1); // cols 4..8, Bypass Reihe y=1
+  const path = merge(
+    hline(1, 4, 2),
+    d1.cells,
+    hline(8, 12, 2),
+  );
+  LEVELS.push({
+    name: 'Stachelgang',
+    start: [1, 2],
+    goal: [12, 2],
+    path,
+    spikes: [d1.hazard],
+    saws: [],
+    blocks: [],
+  });
+}
+
+// --- Level 3: Sägezahn (erste Säge-Ausweiche) ---
+{
+  const d1 = dodge(6, 3, 5, 1); // Bypass Reihe y=4
+  const path = merge(
+    vline(1, 3, 1),
+    hline(1, 6, 3),
+    d1.cells,
+    hline(10, 12, 3),
+    vline(3, 6, 12),
+  );
+  LEVELS.push({
+    name: 'Sägezahn',
+    start: [1, 1],
+    goal: [12, 6],
+    path,
+    spikes: [],
+    saws: [d1.hazard],
+    blocks: [],
+  });
+}
+
+// --- Level 4: Steinbruch (Steine in einer offenen Kammer umgehen) ---
+{
+  const chamber = rect(4, 3, 8, 5);
+  const blocks = [[6, 4], [7, 3], [7, 5]];
+  const path = subtract(
+    merge(
+      hline(1, 6, 1),
+      vline(1, 7, 6),
+      hline(6, 11, 7),
+      chamber,
+    ),
+    blocks,
+  );
+  LEVELS.push({
+    name: 'Steinbruch',
+    start: [1, 1],
+    goal: [11, 7],
+    path,
+    spikes: [],
+    saws: [],
+    blocks,
+  });
+}
+
+// --- Level 5: Zickzack (Stachel + Säge kombiniert) ---
+{
+  const d1 = dodge(2, 2, 4, 1);   // Bypass Reihe y=3, Säge auf Hauptreihe y=2
+  const d2 = dodge(9, 7, 4, -1);  // Bypass Reihe y=6, Stachel auf Hauptreihe y=7
+  const path = merge(
+    hline(1, 2, 2),
+    d1.cells,
+    vline(2, 7, 5),
+    hline(5, 9, 7),
+    d2.cells,
+    hline(12, 13, 7),
+    vline(7, 9, 13),
+  );
+  LEVELS.push({
+    name: 'Zickzack',
+    start: [1, 2],
+    goal: [13, 9],
+    path,
+    spikes: [d2.hazard],
+    saws: [d1.hazard],
+    blocks: [],
+  });
+}
+
+// --- Level 6: Kammerspiel (große Kammer mit mehreren Gefahren) ---
+{
+  const d1 = dodge(7, 2, 5, 1); // Bypass Reihe y=3, Säge auf Hauptreihe y=2
+  const chamber = rect(9, 6, 13, 8);
+  const blocks = [[10, 6], [12, 7]];
+  const path = subtract(
+    merge(
+      rect(1, 1, 3, 3),
+      hline(3, 7, 2),
+      d1.cells,
+      hline(11, 13, 3),
+      vline(3, 8, 11),
+      hline(9, 13, 8),
+      chamber,
+    ),
+    blocks,
+  );
+  LEVELS.push({
+    name: 'Kammerspiel',
+    start: [1, 1],
+    goal: [9, 7],
+    path,
+    spikes: [[13, 3], [9, 8]],
+    saws: [d1.hazard],
+    blocks,
+  });
+}
+
+// --- Level 7: Enger Tunnel (langer Weg, mehrere Ausweichen) ---
+{
+  const d1 = dodge(4, 4, 3, -1);   // Stachel bei y=4, Bypass y=3
+  const d2 = dodge(9, 4, 3, 1);    // Stachel bei y=4, Bypass y=5
+  const d3 = dodge(12, 4, 3, -1);  // Säge bei y=4, Bypass y=3
+  const path = merge(
+    hline(1, 4, 4),
+    d1.cells,
+    hline(6, 9, 4),
+    d2.cells,
+    hline(11, 12, 4),
+    d3.cells,
+    hline(14, 15, 4),
+    vline(4, 8, 15),
+    hline(11, 15, 8),
+  );
+  LEVELS.push({
+    name: 'Enger Tunnel',
+    start: [1, 4],
+    goal: [11, 8],
+    path,
+    spikes: [d1.hazard, d2.hazard],
+    saws: [d3.hazard],
+    blocks: [],
+  });
+}
+
+// --- Level 8: Endgegner (alles kombiniert) ---
+{
+  const d1 = dodge(3, 1, 3, 1);    // Säge bei y=1, Bypass y=2
+  const d2 = dodge(6, 4, 3, -1);   // Stachel bei y=4, Bypass y=3
+  const chamber = rect(9, 6, 12, 9);
+  const blocks = [[10, 7], [11, 8]];
+  const d3 = dodge(11, 2, 3, 1);   // Säge bei y=2, Bypass y=3
+  const path = subtract(
+    merge(
+      hline(1, 3, 1),
+      d1.cells,
+      hline(5, 6, 2),
+      vline(2, 4, 6),
+      d2.cells,
+      vline(4, 6, 8),
+      hline(8, 9, 6),
+      chamber,
+      hline(12, 13, 7),
+      vline(1, 7, 13),
+      hline(11, 13, 1),
+      d3.cells,
+    ),
+    blocks,
+  );
+  LEVELS.push({
     name: 'Endgegner',
-    cols: 28,
-    rows: 17,
-    target: 12,
-    speed: 9.5,
-    start: { x: 3, y: 2, dir: 'RIGHT' },
-    walls: [
-      ...border(28, 17),
-      ...hline(8, 13, 6),
-      ...hline(16, 21, 6),
-      ...hline(8, 17, 11),
-      ...hline(20, 21, 11),
-      ...points([[5, 12], [24, 4], [24, 12]]),
-    ],
-  },
-];
+    start: [1, 1],
+    goal: [9, 8],
+    path,
+    spikes: [d2.hazard],
+    saws: [d1.hazard, d3.hazard],
+    blocks,
+  });
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = { LEVELS, hline, vline, rect, dodge, merge, subtract };
+}
