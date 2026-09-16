@@ -40,6 +40,8 @@
   let spikeSet = null;
   let portal = null;
   let stars = [];
+  let petals = [];
+  let pad = 0;
 
   let snake = [];
   let direction = DIRS.RIGHT;
@@ -112,12 +114,18 @@
     return out;
   }
 
+  const PAD_CELLS = 1.1;
+
   function resizeCanvas() {
-    const maxW = Math.min(window.innerWidth - 32, 660);
-    const maxH = Math.min(window.innerHeight - 240, 660);
-    cellSize = Math.max(10, Math.floor(Math.min(maxW / level.cols, maxH / level.rows)));
-    canvas.width = cellSize * level.cols;
-    canvas.height = cellSize * level.rows;
+    const maxW = Math.min(window.innerWidth - 24, 700);
+    const maxH = Math.min(window.innerHeight - 240, 700);
+    cellSize = Math.max(10, Math.floor(Math.min(
+      maxW / (level.cols + PAD_CELLS),
+      maxH / (level.rows + PAD_CELLS)
+    )));
+    pad = Math.round((cellSize * PAD_CELLS) / 2);
+    canvas.width = cellSize * level.cols + pad * 2;
+    canvas.height = cellSize * level.rows + pad * 2;
   }
 
   function startLevel(index) {
@@ -169,9 +177,35 @@
       return seed / 0x7fffffff;
     };
     stars = [];
-    for (let i = 0; i < 70; i++) {
-      stars.push({ x: rand(), y: rand(), r: 0.5 + rand() * 1.3, a: 0.25 + rand() * 0.55 });
+    for (let i = 0; i < 80; i++) {
+      stars.push({ x: rand(), y: rand(), r: 0.5 + rand() * 1.4, a: 0.25 + rand() * 0.6 });
     }
+    petals = [];
+    for (let i = 0; i < 9; i++) {
+      petals.push({
+        x: rand(),
+        y: rand(),
+        r: 1.6 + rand() * 2.2,
+        a: 0.2 + rand() * 0.35,
+        rot: rand() * Math.PI,
+        vy: 0.0007 + rand() * 0.0012,
+        vx: (rand() - 0.5) * 0.0006,
+      });
+    }
+  }
+
+  function stepPetals() {
+    petals.forEach((p) => {
+      p.y -= p.vy;
+      p.x += p.vx;
+      p.rot += 0.01;
+      if (p.y < -0.05) {
+        p.y = 1.05;
+        p.x = Math.random();
+      }
+      if (p.x < -0.05) p.x = 1.05;
+      if (p.x > 1.05) p.x = -0.05;
+    });
   }
 
   function updateHud() {
@@ -432,25 +466,49 @@
     return solidSet.has(x + ',' + y);
   }
 
+  function blockPath(x, y, inset, radius) {
+    const up = isSolid(x, y - 1), dn = isSolid(x, y + 1);
+    const lf = isSolid(x - 1, y), rt = isSolid(x + 1, y);
+    const l = x * cellSize + (lf ? 0 : inset);
+    const t = y * cellSize + (up ? 0 : inset);
+    const r = (x + 1) * cellSize - (rt ? 0 : inset);
+    const b = (y + 1) * cellSize - (dn ? 0 : inset);
+    const tl = (!up && !lf) ? radius : 0;
+    const tr = (!up && !rt) ? radius : 0;
+    const br = (!dn && !rt) ? radius : 0;
+    const bl = (!dn && !lf) ? radius : 0;
+    ctx.beginPath();
+    ctx.moveTo(l + tl, t);
+    ctx.lineTo(r - tr, t);
+    if (tr) ctx.arcTo(r, t, r, t + tr, tr);
+    ctx.lineTo(r, b - br);
+    if (br) ctx.arcTo(r, b, r - br, b, br);
+    ctx.lineTo(l + bl, b);
+    if (bl) ctx.arcTo(l, b, l, b - bl, bl);
+    ctx.lineTo(l, t + tl);
+    if (tl) ctx.arcTo(l, t, l + tl, t, tl);
+    ctx.closePath();
+  }
+
   function draw() {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     drawSky();
+    ctx.save();
+    ctx.translate(pad, pad);
 
-    solidSet.forEach((key) => {
-      const [x, y] = key.split(',').map(Number);
-      if (stoneSet.has(key)) drawStone(x, y);
-      else drawWood(x, y);
-    });
-
+    drawBlocks();
     spikeSet.forEach((key) => {
       const [x, y] = key.split(',').map(Number);
       drawSpikes(x, y);
     });
-
     if (portal) drawPortal(portal.x, portal.y, food.length === 0);
 
     if (hintPath) {
-      ctx.fillStyle = 'rgba(250, 220, 90, 0.3)';
-      hintPath.forEach((p) => ctx.fillRect(p.x * cellSize, p.y * cellSize, cellSize, cellSize));
+      ctx.fillStyle = 'rgba(255, 228, 120, 0.32)';
+      hintPath.forEach((p) => {
+        roundRect(p.x * cellSize + 2, p.y * cellSize + 2, cellSize - 4, cellSize - 4, cellSize * 0.2);
+        ctx.fill();
+      });
     }
 
     food.forEach((f) => drawPlant(f.x, f.y));
@@ -459,64 +517,122 @@
       drawSaw(c[0], c[1]);
     });
     drawSnake();
+    ctx.restore();
   }
 
   function drawSky() {
-    const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
-    grad.addColorStop(0, '#0f2743');
-    grad.addColorStop(0.55, '#1c4a72');
-    grad.addColorStop(1, '#2f6f96');
-    ctx.fillStyle = grad;
+    const g = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    g.addColorStop(0, '#0a1b33');
+    g.addColorStop(0.45, '#17406b');
+    g.addColorStop(1, '#3b7ea6');
+    ctx.fillStyle = g;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+
     stars.forEach((s) => {
       ctx.fillStyle = 'rgba(255,255,255,' + s.a + ')';
       ctx.beginPath();
-      ctx.arc(s.x * canvas.width, s.y * canvas.height, s.r, 0, Math.PI * 2);
+      ctx.arc(s.x * canvas.width, s.y * canvas.height * 0.8, s.r, 0, Math.PI * 2);
       ctx.fill();
+    });
+
+    const glow = ctx.createLinearGradient(0, canvas.height * 0.72, 0, canvas.height);
+    glow.addColorStop(0, 'rgba(120, 190, 225, 0)');
+    glow.addColorStop(1, 'rgba(160, 215, 240, 0.35)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, canvas.height * 0.72, canvas.width, canvas.height * 0.28);
+
+    petals.forEach((p) => {
+      ctx.save();
+      ctx.translate(p.x * canvas.width, p.y * canvas.height);
+      ctx.rotate(p.rot);
+      ctx.fillStyle = 'rgba(255, 170, 190, ' + p.a + ')';
+      ctx.beginPath();
+      ctx.ellipse(0, 0, p.r * 1.6, p.r, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
     });
   }
 
-  function drawWood(x, y) {
-    const px = x * cellSize;
-    const py = y * cellSize;
-    const grad = ctx.createLinearGradient(px, py, px, py + cellSize);
-    grad.addColorStop(0, '#9a6136');
-    grad.addColorStop(1, '#6b3f21');
-    ctx.fillStyle = grad;
-    ctx.fillRect(px, py, cellSize, cellSize);
-
-    if (!isSolid(x, y - 1)) {
-      ctx.fillStyle = '#b57c4c';
-      ctx.fillRect(px, py, cellSize, Math.max(2, cellSize * 0.2));
-    }
-    ctx.strokeStyle = 'rgba(52, 27, 10, 0.9)';
-    ctx.lineWidth = Math.max(1, cellSize * 0.07);
-    const o = ctx.lineWidth / 2;
-    ctx.beginPath();
-    if (!isSolid(x, y - 1)) { ctx.moveTo(px, py + o); ctx.lineTo(px + cellSize, py + o); }
-    if (!isSolid(x, y + 1)) { ctx.moveTo(px, py + cellSize - o); ctx.lineTo(px + cellSize, py + cellSize - o); }
-    if (!isSolid(x - 1, y)) { ctx.moveTo(px + o, py); ctx.lineTo(px + o, py + cellSize); }
-    if (!isSolid(x + 1, y)) { ctx.moveTo(px + cellSize - o, py); ctx.lineTo(px + cellSize - o, py + cellSize); }
-    ctx.stroke();
+  function drawBlocks() {
+    const outline = Math.max(1.6, cellSize * 0.1);
+    const rad = cellSize * 0.3;
+    solidSet.forEach((key) => {
+      const [x, y] = key.split(',').map(Number);
+      if (stoneSet.has(key)) {
+        stonePath(x, y, 0);
+        ctx.fillStyle = '#2f3d4d';
+      } else {
+        blockPath(x, y, 0, rad);
+        ctx.fillStyle = '#3f2410';
+      }
+      ctx.fill();
+    });
+    solidSet.forEach((key) => {
+      const [x, y] = key.split(',').map(Number);
+      if (stoneSet.has(key)) drawStoneBody(x, y, outline);
+      else drawWoodBody(x, y, outline, rad);
+    });
   }
 
-  function drawStone(x, y) {
+  function drawWoodBody(x, y, outline, rad) {
     const px = x * cellSize;
     const py = y * cellSize;
-    const pad = cellSize * 0.04;
-    const grad = ctx.createLinearGradient(px, py, px, py + cellSize);
-    grad.addColorStop(0, '#b9c3cb');
-    grad.addColorStop(1, '#7d8b98');
-    ctx.fillStyle = grad;
-    roundRect(px + pad, py + pad, cellSize - pad * 2, cellSize - pad * 2, cellSize * 0.16);
+    blockPath(x, y, outline, Math.max(1, rad - outline * 0.6));
+    const g = ctx.createLinearGradient(0, py, 0, py + cellSize);
+    g.addColorStop(0, '#a96d3d');
+    g.addColorStop(0.45, '#8c5527');
+    g.addColorStop(1, '#6b3d1b');
+    ctx.fillStyle = g;
     ctx.fill();
-    ctx.strokeStyle = 'rgba(45, 58, 70, 0.9)';
-    ctx.lineWidth = Math.max(1, cellSize * 0.06);
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+
+    ctx.save();
+    ctx.clip();
+    if (!isSolid(x, y - 1)) {
+      ctx.fillStyle = '#c28a55';
+      ctx.fillRect(px - 1, py, cellSize + 2, cellSize * 0.24);
+      ctx.fillStyle = 'rgba(214, 163, 111, 0.55)';
+      ctx.fillRect(px - 1, py + cellSize * 0.24, cellSize + 2, cellSize * 0.08);
+    }
+    ctx.strokeStyle = 'rgba(78, 42, 16, 0.4)';
+    ctx.lineWidth = Math.max(1, cellSize * 0.05);
+    ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.ellipse(px + cellSize * 0.63, py + cellSize * 0.36, cellSize * 0.08, cellSize * 0.06, 0.4, 0, Math.PI * 2);
+    ctx.moveTo(px + cellSize * 0.12, py + cellSize * 0.56);
+    ctx.lineTo(px + cellSize * 0.72, py + cellSize * 0.56);
+    ctx.moveTo(px + cellSize * 0.34, py + cellSize * 0.8);
+    ctx.lineTo(px + cellSize * 0.96, py + cellSize * 0.8);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function stonePath(x, y, inset) {
+    const g = cellSize * 0.06 + inset;
+    roundRect(x * cellSize + g, y * cellSize + g, cellSize - g * 2, cellSize - g * 2, cellSize * 0.22);
+  }
+
+  function drawStoneBody(x, y, outline) {
+    const px = x * cellSize;
+    const py = y * cellSize;
+    stonePath(x, y, outline);
+    const g = ctx.createLinearGradient(0, py, 0, py + cellSize);
+    g.addColorStop(0, '#c2cdd6');
+    g.addColorStop(0.5, '#9aa8b5');
+    g.addColorStop(1, '#75838f');
+    ctx.fillStyle = g;
     ctx.fill();
+
+    ctx.save();
+    ctx.clip();
+    ctx.fillStyle = 'rgba(226, 235, 242, 0.75)';
+    ctx.fillRect(px - 1, py, cellSize + 2, cellSize * 0.2);
+    ctx.fillStyle = 'rgba(88, 100, 112, 0.5)';
+    ctx.beginPath();
+    ctx.ellipse(px + cellSize * 0.66, py + cellSize * 0.42, cellSize * 0.09, cellSize * 0.07, 0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(px + cellSize * 0.36, py + cellSize * 0.68, cellSize * 0.06, cellSize * 0.05, -0.3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 
   function drawSpikes(x, y) {
@@ -526,80 +642,127 @@
     const w = cellSize / n;
     for (let i = 0; i < n; i++) {
       const bx = px + i * w;
-      const grad = ctx.createLinearGradient(bx, base - cellSize * 0.6, bx, base);
-      grad.addColorStop(0, '#e2e8ef');
-      grad.addColorStop(1, '#7c8795');
-      ctx.fillStyle = grad;
+      const tipY = base - cellSize * (i === 1 ? 0.78 : 0.62);
       ctx.beginPath();
-      ctx.moveTo(bx + w * 0.08, base - 1);
-      ctx.lineTo(bx + w / 2, base - cellSize * 0.62);
-      ctx.lineTo(bx + w * 0.92, base - 1);
+      ctx.moveTo(bx + w * 0.06, base);
+      ctx.lineTo(bx + w / 2, tipY);
+      ctx.lineTo(bx + w * 0.94, base);
       ctx.closePath();
+      const g = ctx.createLinearGradient(bx, tipY, bx + w, base);
+      g.addColorStop(0, '#f0f4f8');
+      g.addColorStop(0.5, '#aab6c2');
+      g.addColorStop(1, '#6b7885');
+      ctx.fillStyle = g;
       ctx.fill();
-      ctx.strokeStyle = 'rgba(40,50,60,0.85)';
-      ctx.lineWidth = Math.max(1, cellSize * 0.04);
+      ctx.strokeStyle = '#333e4a';
+      ctx.lineWidth = Math.max(1.2, cellSize * 0.055);
+      ctx.lineJoin = 'round';
       ctx.stroke();
     }
   }
 
   function drawPlant(x, y) {
     const cx = x * cellSize + cellSize / 2;
-    const base = y * cellSize + cellSize * 0.92;
-    const top = y * cellSize + cellSize * 0.12;
-    ctx.strokeStyle = '#b6e14a';
-    ctx.lineWidth = Math.max(1.5, cellSize * 0.09);
+    const base = y * cellSize + cellSize * 0.95;
+    const top = y * cellSize + cellSize * 0.1;
+    const bend = cellSize * 0.12;
+
     ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(cx, base);
-    ctx.quadraticCurveTo(cx + cellSize * 0.1, (base + top) / 2, cx, top);
+    ctx.strokeStyle = '#2f6b18';
+    ctx.lineWidth = Math.max(2.4, cellSize * 0.17);
+    stemPath(cx, base, top, bend);
+    ctx.stroke();
+    ctx.strokeStyle = '#c3e04c';
+    ctx.lineWidth = Math.max(1.4, cellSize * 0.1);
+    stemPath(cx, base, top, bend);
     ctx.stroke();
 
-    const leaf = (ly, side) => {
-      ctx.fillStyle = '#5cc328';
-      ctx.strokeStyle = '#2f7d16';
-      ctx.lineWidth = Math.max(1, cellSize * 0.04);
-      ctx.beginPath();
-      ctx.ellipse(cx + side * cellSize * 0.2, ly, cellSize * 0.2, cellSize * 0.11, side * 0.6, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-    };
-    leaf(y * cellSize + cellSize * 0.3, -1);
-    leaf(y * cellSize + cellSize * 0.32, 1);
-    leaf(y * cellSize + cellSize * 0.62, -1);
-    leaf(y * cellSize + cellSize * 0.64, 1);
+    const pairs = [
+      [0.26, 1.0],
+      [0.5, 0.92],
+      [0.74, 0.8],
+    ];
+    pairs.forEach((p, i) => {
+      const ly = y * cellSize + cellSize * p[0];
+      const scale = p[1];
+      drawLeaf(cx + bend * (1 - p[0]), ly, -1, scale);
+      drawLeaf(cx + bend * (1 - p[0]), ly + cellSize * 0.03, 1, scale);
+    });
+  }
+
+  function stemPath(cx, base, top, bend) {
+    ctx.beginPath();
+    ctx.moveTo(cx, base);
+    ctx.quadraticCurveTo(cx + bend, (base + top) / 2, cx, top);
+  }
+
+  function drawLeaf(cx, cy, side, scale) {
+    const rx = cellSize * 0.26 * scale;
+    const ry = cellSize * 0.14 * scale;
+    ctx.save();
+    ctx.translate(cx + side * cellSize * 0.2 * scale, cy);
+    ctx.rotate(side * 0.55);
+    const g = ctx.createLinearGradient(0, -ry, 0, ry);
+    g.addColorStop(0, '#7fd93c');
+    g.addColorStop(1, '#3f9a1c');
+    ctx.fillStyle = g;
+    ctx.strokeStyle = '#2b6415';
+    ctx.lineWidth = Math.max(1.1, cellSize * 0.05);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(220, 255, 180, 0.6)';
+    ctx.lineWidth = Math.max(0.8, cellSize * 0.028);
+    ctx.beginPath();
+    ctx.moveTo(-rx * 0.6, 0);
+    ctx.lineTo(rx * 0.7, 0);
+    ctx.stroke();
+    ctx.restore();
   }
 
   function drawSaw(x, y) {
     const cx = x * cellSize + cellSize / 2;
     const cy = y * cellSize + cellSize / 2;
-    const r = cellSize * 0.42;
-    const teeth = 10;
+    const r = cellSize * 0.32;
+    const outer = cellSize * 0.54;
+    const teeth = 9;
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(spinAngle);
-    ctx.fillStyle = '#aab6c2';
-    ctx.strokeStyle = '#5b6874';
-    ctx.lineWidth = Math.max(1, cellSize * 0.05);
+
     ctx.beginPath();
     for (let i = 0; i < teeth; i++) {
       const a0 = (i / teeth) * Math.PI * 2;
-      const a1 = ((i + 0.5) / teeth) * Math.PI * 2;
+      const a1 = ((i + 0.34) / teeth) * Math.PI * 2;
       const a2 = ((i + 1) / teeth) * Math.PI * 2;
-      const outer = r * 1.32;
       if (i === 0) ctx.moveTo(Math.cos(a0) * r, Math.sin(a0) * r);
       ctx.lineTo(Math.cos(a1) * outer, Math.sin(a1) * outer);
       ctx.lineTo(Math.cos(a2) * r, Math.sin(a2) * r);
     }
     ctx.closePath();
+    const g = ctx.createLinearGradient(-r, -r, r, r);
+    g.addColorStop(0, '#dfe7ee');
+    g.addColorStop(0.5, '#a9b5c1');
+    g.addColorStop(1, '#78838f');
+    ctx.fillStyle = g;
     ctx.fill();
+    ctx.strokeStyle = '#3a444f';
+    ctx.lineWidth = Math.max(1.2, cellSize * 0.055);
+    ctx.lineJoin = 'round';
     ctx.stroke();
-    ctx.fillStyle = '#7a8794';
+
+    ctx.fillStyle = '#8b98a5';
     ctx.beginPath();
-    ctx.arc(0, 0, r * 0.45, 0, Math.PI * 2);
+    ctx.arc(0, 0, r * 0.62, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = '#39434e';
+    ctx.strokeStyle = 'rgba(58,68,79,0.75)';
+    ctx.lineWidth = Math.max(1, cellSize * 0.04);
+    ctx.stroke();
+
+    ctx.fillStyle = '#2c343d';
     ctx.beginPath();
-    ctx.arc(0, 0, r * 0.2, 0, Math.PI * 2);
+    ctx.arc(0, 0, r * 0.24, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
   }
@@ -607,38 +770,49 @@
   function drawPortal(x, y, active) {
     const cx = x * cellSize + cellSize / 2;
     const cy = y * cellSize + cellSize / 2;
-    const r = cellSize * 0.48;
+    const r = cellSize * 0.46;
+
     if (active) {
-      const glow = ctx.createRadialGradient(cx, cy, r * 0.2, cx, cy, r * 1.9);
-      glow.addColorStop(0, 'rgba(129, 200, 255, 0.7)');
-      glow.addColorStop(1, 'rgba(129, 200, 255, 0)');
+      const glow = ctx.createRadialGradient(cx, cy, r * 0.2, cx, cy, r * 2.1);
+      glow.addColorStop(0, 'rgba(120, 205, 255, 0.75)');
+      glow.addColorStop(0.5, 'rgba(120, 205, 255, 0.25)');
+      glow.addColorStop(1, 'rgba(120, 205, 255, 0)');
       ctx.fillStyle = glow;
       ctx.beginPath();
-      ctx.arc(cx, cy, r * 1.9, 0, Math.PI * 2);
+      ctx.arc(cx, cy, r * 2.1, 0, Math.PI * 2);
       ctx.fill();
     }
-    ctx.fillStyle = active ? '#0c1c30' : '#182234';
+
+    ctx.fillStyle = active ? '#07182c' : '#141d2a';
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.fill();
+    ctx.strokeStyle = active ? 'rgba(150, 220, 255, 0.9)' : 'rgba(90, 110, 135, 0.8)';
+    ctx.lineWidth = Math.max(1.2, cellSize * 0.06);
+    ctx.stroke();
 
-    ctx.strokeStyle = active ? '#8fd8ff' : '#5b7089';
-    ctx.lineWidth = Math.max(1.6, cellSize * 0.11);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.strokeStyle = active ? '#8fdcff' : '#55687f';
+    ctx.lineWidth = Math.max(1.6, cellSize * 0.12);
     ctx.lineCap = 'round';
     ctx.beginPath();
-    const turns = 2.4;
-    const steps = 48;
-    const phase = active ? spinAngle * 1.5 : 0;
+    const turns = 2.6;
+    const steps = 60;
+    const phase = active ? spinAngle * 1.6 : spinAngle * 0.25;
     for (let i = 0; i <= steps; i++) {
       const t = i / steps;
       const a = t * turns * Math.PI * 2 + phase;
-      const rr = r * 0.92 * (1 - t);
+      const rr = r * 0.95 * (1 - t);
       const px = cx + Math.cos(a) * rr;
       const py = cy + Math.sin(a) * rr;
       if (i === 0) ctx.moveTo(px, py);
       else ctx.lineTo(px, py);
     }
     ctx.stroke();
+    ctx.restore();
   }
 
   function drawSnake() {
@@ -650,48 +824,90 @@
 
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
-    ctx.strokeStyle = '#c97b12';
-    ctx.lineWidth = cellSize * 0.78;
-    strokePath(pts);
-    ctx.strokeStyle = '#f2a93b';
-    ctx.lineWidth = cellSize * 0.64;
-    strokePath(pts);
-    ctx.strokeStyle = 'rgba(255, 224, 150, 0.55)';
-    ctx.lineWidth = cellSize * 0.2;
-    strokePath(pts.map((p) => ({ x: p.x, y: p.y - cellSize * 0.14 })));
+
+    const wHead = cellSize * 0.66;
+    const wTail = cellSize * 0.4;
+    const edge = cellSize * 0.14;
+    strokeTapered(pts, wHead + edge, wTail + edge, '#7a4408');
+    strokeTapered(pts, wHead, wTail, '#efb033');
+    strokeTapered(pts, wHead * 0.42, wTail * 0.42, 'rgba(255, 233, 160, 0.45)');
+
+    for (let i = Math.max(1, pts.length - 4); i < pts.length; i++) {
+      ctx.fillStyle = 'rgba(199, 118, 16, 0.35)';
+      ctx.beginPath();
+      ctx.arc(pts[i].x, pts[i].y, cellSize * 0.06, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     const head = pts[0];
-    ctx.fillStyle = '#ffc247';
+    const px = -direction.y;
+    const py = direction.x;
+
+    const tipX = head.x + direction.x * cellSize * 0.72;
+    const tipY = head.y + direction.y * cellSize * 0.72;
+    ctx.strokeStyle = '#e8402f';
+    ctx.lineWidth = Math.max(1.4, cellSize * 0.07);
+    ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.arc(head.x, head.y, cellSize * 0.42, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = '#c97b12';
-    ctx.lineWidth = Math.max(1, cellSize * 0.05);
+    ctx.moveTo(head.x, head.y);
+    ctx.lineTo(tipX, tipY);
+    ctx.moveTo(tipX, tipY);
+    ctx.lineTo(tipX + direction.x * cellSize * 0.12 + px * cellSize * 0.13, tipY + direction.y * cellSize * 0.12 + py * cellSize * 0.13);
+    ctx.moveTo(tipX, tipY);
+    ctx.lineTo(tipX + direction.x * cellSize * 0.12 - px * cellSize * 0.13, tipY + direction.y * cellSize * 0.12 - py * cellSize * 0.13);
     ctx.stroke();
 
-    const off = cellSize * 0.17;
-    const r = Math.max(1.6, cellSize * 0.09);
-    let e1 = { x: head.x, y: head.y }, e2 = { x: head.x, y: head.y };
-    if (direction.x === 1) { e1 = { x: head.x + off, y: head.y - off }; e2 = { x: head.x + off, y: head.y + off }; }
-    else if (direction.x === -1) { e1 = { x: head.x - off, y: head.y - off }; e2 = { x: head.x - off, y: head.y + off }; }
-    else if (direction.y === -1) { e1 = { x: head.x - off, y: head.y - off }; e2 = { x: head.x + off, y: head.y - off }; }
-    else { e1 = { x: head.x - off, y: head.y + off }; e2 = { x: head.x + off, y: head.y + off }; }
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath(); ctx.arc(e1.x, e1.y, r, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(e2.x, e2.y, r, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#2b1a05';
-    ctx.beginPath(); ctx.arc(e1.x + direction.x * r * 0.3, e1.y + direction.y * r * 0.3, r * 0.5, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(e2.x + direction.x * r * 0.3, e2.y + direction.y * r * 0.3, r * 0.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#f7bb3e';
+    ctx.strokeStyle = '#7a4408';
+    ctx.lineWidth = Math.max(1.6, cellSize * 0.08);
+    ctx.beginPath();
+    ctx.arc(head.x, head.y, cellSize * 0.44, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    const side = cellSize * 0.19;
+    const fwd = cellSize * 0.09;
+    const er = Math.max(2.2, cellSize * 0.145);
+    const e1 = { x: head.x + direction.x * fwd + px * side, y: head.y + direction.y * fwd + py * side };
+    const e2 = { x: head.x + direction.x * fwd - px * side, y: head.y + direction.y * fwd - py * side };
+
+    [e1, e2].forEach((e) => {
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = '#7a4408';
+      ctx.lineWidth = Math.max(1, cellSize * 0.04);
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, er, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#23303d';
+      ctx.beginPath();
+      ctx.arc(e.x + direction.x * er * 0.35, e.y + direction.y * er * 0.35, er * 0.52, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.beginPath();
+      ctx.arc(e.x - er * 0.25, e.y - er * 0.3, er * 0.22, 0, Math.PI * 2);
+      ctx.fill();
+    });
   }
 
-  function strokePath(pts) {
-    ctx.beginPath();
-    pts.forEach((p, i) => {
-      if (i === 0) ctx.moveTo(p.x, p.y);
-      else ctx.lineTo(p.x, p.y);
-    });
-    if (pts.length === 1) ctx.lineTo(pts[0].x + 0.1, pts[0].y);
-    ctx.stroke();
+  function strokeTapered(pts, wHead, wTail, color) {
+    ctx.strokeStyle = color;
+    if (pts.length === 1) {
+      ctx.lineWidth = wHead;
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      ctx.lineTo(pts[0].x + 0.1, pts[0].y);
+      ctx.stroke();
+      return;
+    }
+    for (let i = 0; i < pts.length - 1; i++) {
+      const t = i / (pts.length - 1);
+      ctx.lineWidth = wHead + (wTail - wHead) * t;
+      ctx.beginPath();
+      ctx.moveTo(pts[i].x, pts[i].y);
+      ctx.lineTo(pts[i + 1].x, pts[i + 1].y);
+      ctx.stroke();
+    }
   }
 
   function roundRect(x, y, w, h, r) {
@@ -708,6 +924,7 @@
     if (spinRaf) cancelAnimationFrame(spinRaf);
     const tick = () => {
       spinAngle += 0.03;
+      stepPetals();
       if (!screens.game.classList.contains('hidden')) draw();
       spinRaf = requestAnimationFrame(tick);
     };
