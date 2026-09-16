@@ -22,4 +22,4 @@ Kein Build-Prozess nötig – reines HTML/CSS/JavaScript. Einfach `index.html` �
 - `js/levels.js` – Level-Definitionen: `walls` (Holzblöcke), `stones` (Steinblöcke), `food`, `spikes`, `saws`, `portal`, `gravity`
 - `js/game.js` – Zugbasierte Spiellogik: Kollision, Fallphysik, Portal-Ziel, Undo-Stack, Tipp-Pfadsuche, Canvas-Rendering
 
-Aktuell enthalten: 6 Level (Erste Schritte bis Meisterwerk). Level 1 ist ein Plattform-Level mit Gravitation und Portal, die übrigen sind flache Labyrinth-Level.
+Aktuell enthalten: 1 Level („Erste Schritte"). Die früheren flachen Labyrinth-Level wurden entfernt, weil sie weder Gravitation noch Portal nutzten; weitere Level entstehen im Plattform-Stil von Level 1.
