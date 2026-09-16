@@ -141,6 +141,7 @@
     }
     apples = level.apples.map((a) => ({ x: a[0], y: a[1] }));
     gears = (level.gears || []).map((g) => ({ path: g.path, idx: 0, step: 1 }));
+    if (level.gravity) applyGravity();
     undoStack = [];
     hintUsed = false;
     alive = true;
@@ -252,12 +253,36 @@
       return;
     }
 
+    if (level.gravity) {
+      const fallResult = applyGravity();
+      if (fallResult) {
+        draw();
+        onFail(fallResult === 'off' ? 'Die Schlange ist ins Leere gefallen!' : 'Beim Fallen in einen Stachel gelandet!');
+        return;
+      }
+    }
+
     updateHud();
     draw();
 
     if (apples.length === 0) {
       onWin();
     }
+  }
+
+  function isGrounded() {
+    return snake.some((seg) => wallSet.has(seg.x + ',' + (seg.y + 1)));
+  }
+
+  function applyGravity() {
+    let fell = false;
+    while (!isGrounded()) {
+      snake = snake.map((seg) => ({ x: seg.x, y: seg.y + 1 }));
+      fell = true;
+      if (snake.some((seg) => seg.y >= level.rows)) return 'off';
+    }
+    if (fell && snake.some((seg) => spikeSet.has(seg.x + ',' + seg.y))) return 'spike';
+    return false;
   }
 
   function onWin() {

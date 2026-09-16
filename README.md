@@ -12,6 +12,7 @@ Kein Build-Prozess nötig – reines HTML/CSS/JavaScript. Einfach `index.html` i
 - „Rückgängig" macht den letzten Zug ungeschehen (auch nach einem Fehlschlag), „Tipp" zeigt kurz einen sicheren Weg zum nächsten Apfel – kostet aber einen Stern.
 - Sternebewertung (1–3) basiert auf der Anzahl der Versuche; ein genutzter Tipp begrenzt das Level auf maximal 2 Sterne.
 - Fortschritt und Sterne werden lokal im Browser gespeichert (`localStorage`).
+- Manche Level (z. B. Level 1) haben Gravitation: Die Blöcke bilden gestufte Plattformen statt einer flachen Maze. Trägt kein Segment der Schlange mehr Bodenkontakt, fällt die gesamte Schlange als Einheit nach unten – landet sie auf einer Plattform, geht es weiter; fällt sie ins Leere oder auf einen Stachel, ist der Versuch vorbei.
 
 ## Struktur
 

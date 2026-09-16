@@ -30,11 +30,12 @@ function points(arr) {
 const LEVELS = [
   {
     name: 'Erste Schritte',
-    cols: 12,
+    cols: 10,
     rows: 8,
-    start: { x: 2, y: 2, dir: 'RIGHT', length: 2 },
-    walls: [...border(12, 8), ...points([[6, 4]])],
-    apples: points([[9, 2], [9, 5], [3, 5]]),
+    gravity: true,
+    start: { x: 2, y: 5, dir: 'RIGHT', length: 2 },
+    walls: [...vline(3, 7, 0), ...hline(1, 5, 6), ...hline(8, 9, 6)],
+    apples: points([[4, 5], [8, 5]]),
     spikes: [],
     gears: [],
   },
