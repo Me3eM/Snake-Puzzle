@@ -22,4 +22,8 @@ Kein Build-Prozess nötig – reines HTML/CSS/JavaScript. Einfach `index.html` �
 - `js/levels.js` – Level-Definitionen: `walls` (Holzblöcke), `stones` (Steinblöcke), `food`, `spikes`, `saws`, `portal`, `gravity`
 - `js/game.js` – Zugbasierte Spiellogik: Kollision, Fallphysik, Portal-Ziel, Undo-Stack, Tipp-Pfadsuche, Canvas-Rendering
 
-Aktuell enthalten: 1 Level („Erste Schritte"). Die früheren flachen Labyrinth-Level wurden entfernt, weil sie weder Gravitation noch Portal nutzten; weitere Level entstehen im Plattform-Stil von Level 1.
+Aktuell enthalten: 1 großes Level („Der lange Weg", 20x13 Felder, 12 Pflanzen, ca. 93 Züge). Die früheren flachen Labyrinth-Level wurden entfernt, weil sie weder Gravitation noch Portal nutzten.
+
+## Level prüfen
+
+Level dieser Größe lassen sich nicht mehr per Brute-Force-BFS über alle Zustände lösen (Pflanzen-Teilmengen mal Schlangenformen sprengen den Speicher). Stattdessen wird etappenweise gesucht: pro Etappe eine Breitensuche nur über Schlangenformen bis zur nächsten Pflanze, mit Backtracking über die Reihenfolge. Wichtig dabei: Auf eine Pflanze zu *fallen* frisst sie nicht - nur ein echter Zug darauf zaehlt.
