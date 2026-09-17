@@ -1,16 +1,8 @@
 (function () {
-  const DIRS = {
-    UP: { x: 0, y: -1 },
-    DOWN: { x: 0, y: 1 },
-    LEFT: { x: -1, y: 0 },
-    RIGHT: { x: 1, y: 0 },
-  };
-  const DIR_LIST = [DIRS.UP, DIRS.DOWN, DIRS.LEFT, DIRS.RIGHT];
+  const DIR_NAMES = ['UP', 'DOWN', 'LEFT', 'RIGHT'];
 
   const STORAGE_UNLOCKED = 'snakepuzzle_unlocked';
   const STORAGE_STARS = 'snakepuzzle_stars';
-
-  function key(x, y) { return x + ',' + y; }
 
   const canvas = document.getElementById('game-canvas');
   const ctx = canvas.getContext('2d');
@@ -31,36 +23,50 @@
   const winStarsEl = document.getElementById('win-stars');
 
   let currentLevelIndex = 0;
-  let runtime = null;   // built maze data for current level
-  let snake = [];       // array of {x,y}
-  let visited = null;   // Set of "x,y"
-  let facing = DIRS.RIGHT;
-  let state = 'idle';   // 'playing' | 'dead' | 'won' | 'stuck'
+  let runtime = null;     // sim.buildLevelRuntime(def)
+  let current = null;     // { snake, apples } – zuletzt zur Ruhe gekommener Zustand
+  let history = [];       // Stack vorheriger Zustände für Undo
+  let facing = 'RIGHT';
+  let state = 'idle';     // 'playing' | 'falling' | 'dead' | 'won'
   let attempts = 1;
   let usedSkip = false;
   let cellSize = 28;
   let rafId = null;
+
+  // Fall-/Zug-Animation
+  let animFrames = null;  // Liste von Schlangen-Formen
+  let animIndex = 0;
+  let animLastTick = 0;
+  let animApples = null;  // Äpfel-Set, das während der Animation angezeigt wird
+  let pendingResult = null;
+
   let deathAt = 0;
+  let shakeUntil = 0;
+  let hintDirName = null;
   let hintFlashUntil = 0;
-  let hintDir = null;
-  let shakeCells = null; // {key, until}
+
+  const ANIM_STEP_MS = 65;
 
   // ---------- persistence ----------
   function loadUnlocked() {
-    const v = parseInt(localStorage.getItem(STORAGE_UNLOCKED) || '1', 10);
-    return Number.isFinite(v) && v > 0 ? v : 1;
+    try {
+      const v = parseInt(localStorage.getItem(STORAGE_UNLOCKED) || '1', 10);
+      return Number.isFinite(v) && v > 0 ? v : 1;
+    } catch (e) { return 1; }
   }
   function saveUnlocked(n) {
-    localStorage.setItem(STORAGE_UNLOCKED, String(Math.max(loadUnlocked(), n)));
+    try { localStorage.setItem(STORAGE_UNLOCKED, String(Math.max(loadUnlocked(), n))); } catch (e) { /* ignore */ }
   }
   function loadStars() {
     try { return JSON.parse(localStorage.getItem(STORAGE_STARS) || '{}'); }
     catch (e) { return {}; }
   }
   function saveStars(index, stars) {
-    const all = loadStars();
-    all[index] = Math.max(all[index] || 0, stars);
-    localStorage.setItem(STORAGE_STARS, JSON.stringify(all));
+    try {
+      const all = loadStars();
+      all[index] = Math.max(all[index] || 0, stars);
+      localStorage.setItem(STORAGE_STARS, JSON.stringify(all));
+    } catch (e) { /* ignore */ }
   }
 
   // ---------- screens ----------
@@ -101,78 +107,10 @@
     });
   }
 
-  // ---------- level building ----------
-  function buildRuntime(def) {
-    const cellType = new Map();
-    def.path.forEach(([x, y]) => cellType.set(key(x, y), 'path'));
-    def.spikes.forEach(([x, y]) => cellType.set(key(x, y), 'spike'));
-    def.saws.forEach(([x, y]) => cellType.set(key(x, y), 'saw'));
-    def.blocks.forEach(([x, y]) => cellType.set(key(x, y), 'block'));
-
-    const all = [...def.path, ...def.blocks];
-    const xs = all.map((c) => c[0]);
-    const ys = all.map((c) => c[1]);
-    const minX = Math.min(...xs) - 1;
-    const maxX = Math.max(...xs) + 1;
-    const minY = Math.min(...ys) - 1;
-    const maxY = Math.max(...ys) + 1;
-
-    return {
-      def,
-      cellType,
-      start: { x: def.start[0], y: def.start[1] },
-      goal: { x: def.goal[0], y: def.goal[1] },
-      minX, maxX, minY, maxY,
-      cols: maxX - minX + 1,
-      rows: maxY - minY + 1,
-    };
-  }
-
-  function cellTypeAt(x, y) {
-    return runtime.cellType.get(key(x, y));
-  }
-
-  function isSafeWalkable(x, y) {
-    const t = cellTypeAt(x, y);
-    return t === 'path';
-  }
-
-  // BFS ignoring hazards (safe route only), used for hint + skip + solvability.
-  function findSafePath(from, to) {
-    const startKey = key(from.x, from.y);
-    const goalKey = key(to.x, to.y);
-    if (startKey === goalKey) return [from];
-    const cameFrom = new Map();
-    const seen = new Set([startKey]);
-    const queue = [from];
-    while (queue.length) {
-      const cur = queue.shift();
-      for (const d of DIR_LIST) {
-        const nx = cur.x + d.x, ny = cur.y + d.y;
-        const k = key(nx, ny);
-        if (seen.has(k) || !isSafeWalkable(nx, ny)) continue;
-        seen.add(k);
-        cameFrom.set(k, cur);
-        if (k === goalKey) {
-          const path = [{ x: nx, y: ny }];
-          let step = cur;
-          while (step) {
-            path.unshift(step);
-            const pk = key(step.x, step.y);
-            step = cameFrom.get(pk);
-          }
-          return path;
-        }
-        queue.push({ x: nx, y: ny });
-      }
-    }
-    return null;
-  }
-
   // ---------- level lifecycle ----------
   function resizeCanvas() {
     const wrap = canvas.parentElement;
-    const maxW = Math.min(wrap.clientWidth || window.innerWidth - 24, 520);
+    const maxW = Math.min(wrap.clientWidth || window.innerWidth - 24, 560);
     const maxH = Math.min(window.innerHeight - 260, 520);
     cellSize = Math.max(16, Math.floor(Math.min(maxW / runtime.cols, maxH / runtime.rows)));
     canvas.width = cellSize * runtime.cols;
@@ -183,7 +121,8 @@
     currentLevelIndex = index;
     attempts = 1;
     usedSkip = false;
-    runtime = buildRuntime(LEVELS[index]);
+    const def = LEVELS[index];
+    runtime = buildLevelRuntime(def);
     setupLevelState();
     showScreen('game');
     resizeCanvas();
@@ -192,12 +131,13 @@
   }
 
   function setupLevelState() {
-    snake = [{ x: runtime.start.x, y: runtime.start.y, born: performance.now() }];
-    visited = new Set([key(runtime.start.x, runtime.start.y)]);
-    facing = DIRS.RIGHT;
+    current = initialState(runtime.def);
+    history = [];
+    facing = 'RIGHT';
     state = 'playing';
-    deathAt = 0;
-    hintDir = null;
+    animFrames = null;
+    pendingResult = null;
+    hintDirName = null;
     hintFlashUntil = 0;
     hudLevelName.textContent = 'Level ' + (currentLevelIndex + 1);
     hudLevelName.title = runtime.def.name;
@@ -211,80 +151,68 @@
   }
 
   // ---------- movement ----------
-  function head() { return snake[snake.length - 1]; }
-
-  function hasAvailableMove(pos) {
-    return DIR_LIST.some((d) => {
-      const nx = pos.x + d.x, ny = pos.y + d.y;
-      const t = cellTypeAt(nx, ny);
-      if (!t || t === 'block') return false;
-      return !visited.has(key(nx, ny));
-    });
+  function currentSnake() {
+    if (animFrames) return animFrames[Math.min(animIndex, animFrames.length - 1)];
+    return current.snake;
+  }
+  function currentApples() {
+    return animFrames ? animApples : current.apples;
   }
 
   function attemptMove(dirName) {
-    if (state !== 'playing') return;
-    const d = DIRS[dirName];
-    if (!d) return;
-    facing = d;
-    const h = head();
-    const nx = h.x + d.x, ny = h.y + d.y;
-    const k = key(nx, ny);
-    const t = cellTypeAt(nx, ny);
+    if (state !== 'playing' || !DIR_NAMES.includes(dirName)) return;
+    facing = dirName;
+    const res = step(runtime, current, dirName);
+    if (!res) { bumpFeedback(); return; }
 
-    if (!t || t === 'block' || visited.has(k)) {
-      bumpFeedback();
+    history.push(cloneState(current));
+    animFrames = res.frames;
+    animIndex = 0;
+    animLastTick = performance.now();
+    animApples = res.state.apples;
+    pendingResult = res;
+    state = 'falling';
+  }
+
+  function finishAnimation() {
+    const res = pendingResult;
+    current = res.state;
+    animFrames = null;
+    pendingResult = null;
+
+    if (res.dead) {
+      state = 'dead';
+      deathAt = performance.now();
+      setTimeout(() => { if (state === 'dead') showOverlay('fail'); }, 550);
       return;
     }
-
-    snake.push({ x: nx, y: ny, born: performance.now() });
-    visited.add(k);
-
-    if (nx === runtime.goal.x && ny === runtime.goal.y) {
-      triggerWin();
+    if (res.won) {
+      state = 'won';
+      finishWin();
       return;
     }
-    if (t === 'spike' || t === 'saw') {
-      triggerDeath();
-      return;
+    state = 'playing';
+    if (!hasAnyLegalMove()) {
+      state = 'dead';
+      deathAt = performance.now();
+      setTimeout(() => { if (state === 'dead') showOverlay('fail'); }, 350);
     }
-    if (!hasAvailableMove({ x: nx, y: ny })) {
-      triggerStuck();
-    }
+  }
+
+  function hasAnyLegalMove() {
+    return DIR_NAMES.some((dir) => !!step(runtime, current, dir));
   }
 
   function undoMove() {
-    if (state !== 'playing' || snake.length <= 1) return;
-    const seg = snake.pop();
-    visited.delete(key(seg.x, seg.y));
+    if (state !== 'playing' || history.length === 0) return;
+    current = history.pop();
   }
 
   function bumpFeedback() {
-    shakeCells = { until: performance.now() + 160 };
+    shakeUntil = performance.now() + 160;
   }
 
-  function triggerDeath() {
-    state = 'dead';
-    deathAt = performance.now();
-    setTimeout(() => {
-      if (state === 'dead') showFailOverlay();
-    }, 550);
-  }
-
-  function triggerStuck() {
-    state = 'stuck';
-    deathAt = performance.now();
-    setTimeout(() => {
-      if (state === 'stuck') showFailOverlay();
-    }, 350);
-  }
-
-  function showFailOverlay() {
-    showOverlay('fail');
-  }
-
-  function triggerWin() {
-    state = 'won';
+  function finishWin() {
     const stars = usedSkip ? 1 : (attempts === 1 ? 3 : attempts <= 3 ? 2 : 1);
     saveStars(currentLevelIndex, stars);
     saveUnlocked(currentLevelIndex + 2);
@@ -298,21 +226,29 @@
 
   function skipLevel() {
     if (!runtime || state !== 'playing') return;
-    const solution = findSafePath(runtime.start, runtime.goal);
+    const path = solve(runtime, current);
+    if (!path) return;
     usedSkip = true;
-    if (!solution) { return; }
-    snake = solution.map((p) => ({ x: p.x, y: p.y, born: performance.now() }));
-    visited = new Set(solution.map((p) => key(p.x, p.y)));
-    triggerWin();
+    let cur = current;
+    let result = null;
+    for (const dir of path) {
+      result = step(runtime, cur, dir);
+      if (!result) break;
+      cur = result.state;
+      if (result.dead || result.won) break;
+    }
+    if (result && result.won) {
+      current = cur;
+      state = 'won';
+      finishWin();
+    }
   }
 
   function showHint() {
     if (state !== 'playing') return;
-    const path = findSafePath(head(), runtime.goal);
-    if (!path || path.length < 2) return;
-    const next = path[1];
-    const h = head();
-    hintDir = { x: next.x - h.x, y: next.y - h.y };
+    const path = solve(runtime, current);
+    if (!path || !path.length) return;
+    hintDirName = path[0];
     hintFlashUntil = performance.now() + 650;
   }
 
@@ -325,9 +261,22 @@
     if (rafId) cancelAnimationFrame(rafId);
     rafId = null;
   }
-  function loop() {
-    draw();
+  function loop(time) {
+    update(time);
+    draw(time);
     rafId = requestAnimationFrame(loop);
+  }
+
+  function update(time) {
+    if (state === 'falling' && animFrames) {
+      while (time - animLastTick >= ANIM_STEP_MS && animIndex < animFrames.length - 1) {
+        animIndex++;
+        animLastTick += ANIM_STEP_MS;
+      }
+      if (animIndex >= animFrames.length - 1 && time - animLastTick >= ANIM_STEP_MS) {
+        finishAnimation();
+      }
+    }
   }
 
   function toPx(gx) { return (gx - runtime.minX) * cellSize; }
@@ -350,43 +299,50 @@
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // simple stars
     ctx.fillStyle = 'rgba(255,255,255,0.5)';
     const seed = runtime.cols * 7919 + runtime.rows;
     for (let i = 0; i < 40; i++) {
-      const rx = (Math.sin(i * 12.9898 + seed) * 43758.5453) % 1;
-      const ry = (Math.sin(i * 78.233 + seed) * 12345.678) % 1;
-      const x = Math.abs(rx) * canvas.width;
-      const y = Math.abs(ry) * canvas.height * 0.7;
-      ctx.fillRect(x, y, 1.6, 1.6);
+      const rx = Math.abs((Math.sin(i * 12.9898 + seed) * 43758.5453) % 1);
+      const ry = Math.abs((Math.sin(i * 78.233 + seed) * 12345.678) % 1);
+      ctx.fillRect(rx * canvas.width, ry * canvas.height * 0.7, 1.6, 1.6);
     }
   }
 
-  function drawFloorTile(x, y) {
+  function drawBlock(x, y) {
     const pad = 1.5;
+    const px = toPx(x) + pad, py = toPy(y) + pad, s = cellSize - pad * 2;
     const g = ctx.createLinearGradient(0, toPy(y), 0, toPy(y) + cellSize);
     g.addColorStop(0, '#c98a4a');
     g.addColorStop(1, '#8a5527');
     ctx.fillStyle = g;
-    roundRect(toPx(x) + pad, toPy(y) + pad, cellSize - pad * 2, cellSize - pad * 2, cellSize * 0.18);
+    roundRect(px, py, s, s, cellSize * 0.16);
     ctx.fill();
     ctx.strokeStyle = 'rgba(107,63,29,0.6)';
     ctx.lineWidth = 1;
     ctx.stroke();
+    // Grasrand oben, wenn darüber kein weiterer Block liegt
+    if (!runtime.solidSet.has(cellKey(x, y - 1))) {
+      ctx.fillStyle = 'rgba(122, 196, 90, 0.85)';
+      ctx.fillRect(px, py, s, Math.max(2, cellSize * 0.09));
+    }
   }
 
-  function drawBlock(x, y) {
-    const pad = 2;
-    const px = toPx(x) + pad, py = toPy(y) + pad, s = cellSize - pad * 2;
-    const g = ctx.createLinearGradient(0, py, 0, py + s);
-    g.addColorStop(0, '#b6bfc9');
-    g.addColorStop(1, '#7c8794');
-    ctx.fillStyle = g;
-    roundRect(px, py, s, s, cellSize * 0.16);
+  function drawApple(x, y, t) {
+    const cx = toPx(x) + cellSize / 2, cy = toPy(y) + cellSize / 2 + Math.sin(t / 260 + x) * cellSize * 0.03;
+    const r = cellSize * 0.26;
+    ctx.fillStyle = '#5a3a20';
+    ctx.fillRect(cx - 1, cy - r - 6, 2, 6);
+    ctx.fillStyle = '#57b354';
+    ctx.beginPath();
+    ctx.ellipse(cx + 5, cy - r - 3, 5, 3, -0.5, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = '#5b6572';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
+    const g = ctx.createRadialGradient(cx - r * 0.4, cy - r * 0.4, 1, cx, cy, r);
+    g.addColorStop(0, '#ff8a7a');
+    g.addColorStop(1, '#e5372e');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   function drawSpike(x, y) {
@@ -436,22 +392,6 @@
     ctx.restore();
   }
 
-  function drawStartMarker(x, y) {
-    const cx = toPx(x) + cellSize / 2, cy = toPy(y) + cellSize / 2;
-    ctx.strokeStyle = 'rgba(20,20,30,0.55)';
-    ctx.lineWidth = Math.max(1.5, cellSize * 0.06);
-    ctx.beginPath();
-    let a = 0, r = cellSize * 0.04;
-    ctx.moveTo(cx, cy);
-    for (let i = 0; i < 60; i++) {
-      a += 0.35;
-      r += cellSize * 0.0035;
-      const px = cx + Math.cos(a) * r, py = cy + Math.sin(a) * r;
-      ctx.lineTo(px, py);
-    }
-    ctx.stroke();
-  }
-
   function drawGoalMarker(x, y, t) {
     const cx = toPx(x) + cellSize / 2, cy = toPy(y) + cellSize / 2;
     const bob = Math.sin(t / 300) * cellSize * 0.05;
@@ -472,15 +412,11 @@
     ctx.stroke();
   }
 
-  function drawSnake(t) {
-    // rope body
+  function drawSnake(snake) {
     for (let i = 0; i < snake.length; i++) {
       const seg = snake[i];
-      const age = t - (seg.born || 0);
-      const pop = Math.min(1, age / 140);
-      const scale = 0.55 + 0.45 * pop;
       const cx = toPx(seg.x) + cellSize / 2, cy = toPy(seg.y) + cellSize / 2;
-      const s = cellSize * 0.86 * scale;
+      const s = cellSize * 0.86;
       const isHead = i === snake.length - 1;
       const g = ctx.createLinearGradient(cx, cy - s / 2, cx, cy + s / 2);
       if (state === 'dead' && isHead) {
@@ -510,14 +446,13 @@
       }
     }
 
-    // face on head
-    const h = head();
+    const h = snake[snake.length - 1];
     const cx = toPx(h.x) + cellSize / 2, cy = toPy(h.y) + cellSize / 2;
     const eyeOff = cellSize * 0.16;
     let e1 = { x: cx, y: cy }, e2 = { x: cx, y: cy };
-    if (facing === DIRS.RIGHT) { e1 = { x: cx + eyeOff, y: cy - eyeOff }; e2 = { x: cx + eyeOff, y: cy + eyeOff }; }
-    else if (facing === DIRS.LEFT) { e1 = { x: cx - eyeOff, y: cy - eyeOff }; e2 = { x: cx - eyeOff, y: cy + eyeOff }; }
-    else if (facing === DIRS.UP) { e1 = { x: cx - eyeOff, y: cy - eyeOff }; e2 = { x: cx + eyeOff, y: cy - eyeOff }; }
+    if (facing === 'RIGHT') { e1 = { x: cx + eyeOff, y: cy - eyeOff }; e2 = { x: cx + eyeOff, y: cy + eyeOff }; }
+    else if (facing === 'LEFT') { e1 = { x: cx - eyeOff, y: cy - eyeOff }; e2 = { x: cx - eyeOff, y: cy + eyeOff }; }
+    else if (facing === 'UP') { e1 = { x: cx - eyeOff, y: cy - eyeOff }; e2 = { x: cx + eyeOff, y: cy - eyeOff }; }
     else { e1 = { x: cx - eyeOff, y: cy + eyeOff }; e2 = { x: cx + eyeOff, y: cy + eyeOff }; }
 
     const eyeR = Math.max(2, cellSize * 0.13);
@@ -540,51 +475,47 @@
     });
   }
 
-  function draw() {
+  function draw(time) {
     if (!runtime) return;
-    const t = performance.now();
+    const t = time || performance.now();
 
     ctx.save();
-    if (shakeCells) {
-      const remain = shakeCells.until - t;
-      if (remain > 0) {
-        const mag = (remain / 160) * 4;
-        ctx.translate((Math.random() - 0.5) * mag, (Math.random() - 0.5) * mag);
-      } else {
-        shakeCells = null;
-      }
+    if (t < shakeUntil) {
+      const remain = shakeUntil - t;
+      const mag = (remain / 160) * 4;
+      ctx.translate((Math.random() - 0.5) * mag, (Math.random() - 0.5) * mag);
     }
 
     drawBackground();
 
-    runtime.cellType.forEach((type, k) => {
+    runtime.solidSet.forEach((k) => {
       const [x, y] = k.split(',').map(Number);
-      if (type === 'block') return;
-      drawFloorTile(x, y);
+      drawBlock(x, y);
     });
 
-    const gx = runtime.goal.x, gy = runtime.goal.y;
-    if (!visited.has(key(gx, gy))) drawGoalMarker(gx, gy, t);
-    if (!visited.has(key(runtime.start.x, runtime.start.y)) || snake.length === 1) {
-      drawStartMarker(runtime.start.x, runtime.start.y);
+    if (!hazardAt(runtime, runtime.goal.x, runtime.goal.y)) {
+      const snakeNow = currentSnake();
+      const headOnGoal = snakeNow.some((s) => sameCell(s, runtime.goal));
+      if (!headOnGoal) drawGoalMarker(runtime.goal.x, runtime.goal.y, t);
     }
 
-    runtime.cellType.forEach((type, k) => {
+    const apples = currentApples();
+    apples.forEach((k) => {
       const [x, y] = k.split(',').map(Number);
-      if (type === 'spike') drawSpike(x, y);
-      else if (type === 'saw') drawSaw(x, y, t);
-      else if (type === 'block') drawBlock(x, y);
+      drawApple(x, y, t);
     });
 
-    drawSnake(t);
+    runtime.hazardMap.forEach((kind, k) => {
+      const [x, y] = k.split(',').map(Number);
+      if (kind === 'spike') drawSpike(x, y);
+      else drawSaw(x, y, t);
+    });
+
+    drawSnake(currentSnake());
     ctx.restore();
   }
 
   // ---------- input ----------
-  function requestDirection(name) {
-    attemptMove(name);
-  }
-
   document.addEventListener('keydown', (e) => {
     if (screens.game.classList.contains('hidden')) return;
     const map = {
@@ -596,7 +527,7 @@
     if (map[e.code]) {
       e.preventDefault();
       if (e.repeat) return;
-      requestDirection(map[e.code]);
+      attemptMove(map[e.code]);
       return;
     }
     if (e.code === 'Escape') togglePause();
@@ -605,17 +536,15 @@
   document.querySelectorAll('.dpad').forEach((btn) => {
     const fire = (e) => {
       e.preventDefault();
-      requestDirection(btn.dataset.dir);
+      attemptMove(btn.dataset.dir);
     };
     btn.addEventListener('touchstart', fire, { passive: false });
     btn.addEventListener('mousedown', fire);
   });
 
-  // hint flash rendering: highlight matching dpad button
   setInterval(() => {
-    if (performance.now() < hintFlashUntil && hintDir) {
-      const name = Object.keys(DIRS).find((k) => DIRS[k] === hintDir || (DIRS[k].x === hintDir.x && DIRS[k].y === hintDir.y));
-      const btn = document.querySelector('.dpad[data-dir="' + name + '"]');
+    if (performance.now() < hintFlashUntil && hintDirName) {
+      const btn = document.querySelector('.dpad[data-dir="' + hintDirName + '"]');
       if (btn && !btn.classList.contains('flash')) {
         btn.classList.add('flash');
         setTimeout(() => btn.classList.remove('flash'), 600);
