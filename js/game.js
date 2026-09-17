@@ -292,6 +292,10 @@
     ctx.closePath();
   }
 
+  function pseudoRandom(i, seed) {
+    return Math.abs((Math.sin(i * 12.9898 + seed) * 43758.5453) % 1);
+  }
+
   function drawBackground() {
     const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
     grad.addColorStop(0, '#0f2447');
@@ -299,13 +303,44 @@
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
     const seed = runtime.cols * 7919 + runtime.rows;
-    for (let i = 0; i < 40; i++) {
-      const rx = Math.abs((Math.sin(i * 12.9898 + seed) * 43758.5453) % 1);
-      const ry = Math.abs((Math.sin(i * 78.233 + seed) * 12345.678) % 1);
-      ctx.fillRect(rx * canvas.width, ry * canvas.height * 0.7, 1.6, 1.6);
+
+    // Mond
+    const moonX = canvas.width * 0.86, moonY = canvas.height * 0.16;
+    const moonR = Math.max(10, cellSize * 0.7);
+    ctx.fillStyle = 'rgba(255,250,225,0.9)';
+    ctx.beginPath(); ctx.arc(moonX, moonY, moonR, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(15,36,71,0.18)';
+    ctx.beginPath(); ctx.arc(moonX - moonR * 0.35, moonY - moonR * 0.2, moonR * 0.8, 0, Math.PI * 2); ctx.fill();
+
+    // Sterne
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    const starCount = Math.min(160, Math.max(40, Math.round(runtime.cols * 1.6)));
+    for (let i = 0; i < starCount; i++) {
+      const rx = pseudoRandom(i, seed);
+      const ry = pseudoRandom(i + 500, seed);
+      ctx.fillRect(rx * canvas.width, ry * canvas.height * 0.65, 1.6, 1.6);
     }
+
+    // Ferne Hügel-Silhouetten (Parallaxe), zwei Schichten
+    drawHillLayer(seed + 1, canvas.height * 0.72, canvas.height * 0.16, 'rgba(20,45,80,0.55)', 5);
+    drawHillLayer(seed + 2, canvas.height * 0.82, canvas.height * 0.12, 'rgba(14,30,58,0.75)', 8);
+  }
+
+  function drawHillLayer(seed, baseY, amp, color, count) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(0, canvas.height);
+    ctx.lineTo(0, baseY);
+    const step = canvas.width / count;
+    for (let i = 0; i <= count; i++) {
+      const h = baseY - amp * (0.4 + 0.6 * pseudoRandom(i, seed));
+      const x = i * step;
+      ctx.quadraticCurveTo(x - step / 2, h - amp * 0.15, x, h);
+    }
+    ctx.lineTo(canvas.width, canvas.height);
+    ctx.closePath();
+    ctx.fill();
   }
 
   function drawBlock(x, y) {
@@ -324,6 +359,18 @@
     if (!runtime.solidSet.has(cellKey(x, y - 1))) {
       ctx.fillStyle = 'rgba(122, 196, 90, 0.85)';
       ctx.fillRect(px, py, s, Math.max(2, cellSize * 0.09));
+      // gelegentlich ein kleines Grasbüschel obendrauf, rein dekorativ
+      if (pseudoRandom(x * 31 + y * 7, 4242) < 0.3) {
+        const gx = px + s * 0.5, gy = py;
+        ctx.strokeStyle = 'rgba(96, 176, 74, 0.9)';
+        ctx.lineWidth = Math.max(1, cellSize * 0.05);
+        [-0.25, 0, 0.25].forEach((off) => {
+          ctx.beginPath();
+          ctx.moveTo(gx + off * s, gy);
+          ctx.quadraticCurveTo(gx + off * s * 1.6, gy - s * 0.22, gx + off * s * 0.8, gy - s * 0.34);
+          ctx.stroke();
+        });
+      }
     }
   }
 
@@ -393,23 +440,35 @@
   }
 
   function drawGoalMarker(x, y, t) {
-    const cx = toPx(x) + cellSize / 2, cy = toPy(y) + cellSize / 2;
-    const bob = Math.sin(t / 300) * cellSize * 0.05;
-    ctx.fillStyle = '#ffd447';
-    ctx.strokeStyle = '#a86f00';
-    ctx.lineWidth = 1.5;
-    const r = cellSize * 0.28;
-    const spikes = 5;
+    const baseX = toPx(x) + cellSize / 2;
+    const baseY = toPy(y) + cellSize;
+    const poleH = cellSize * 1.7;
+    const topY = baseY - poleH;
+
+    ctx.strokeStyle = '#caa15a';
+    ctx.lineWidth = Math.max(2, cellSize * 0.09);
     ctx.beginPath();
-    for (let i = 0; i < spikes * 2; i++) {
-      const a = (Math.PI * i) / spikes - Math.PI / 2;
-      const rad = i % 2 === 0 ? r : r * 0.45;
-      const px = cx + Math.cos(a) * rad, py = cy + bob + Math.sin(a) * rad;
-      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-    }
+    ctx.moveTo(baseX, baseY);
+    ctx.lineTo(baseX, topY);
+    ctx.stroke();
+
+    const wave = Math.sin(t / 220) * cellSize * 0.12;
+    const flagW = cellSize * 0.62, flagH = cellSize * 0.42;
+    ctx.fillStyle = '#ff5a4d';
+    ctx.beginPath();
+    ctx.moveTo(baseX, topY);
+    ctx.quadraticCurveTo(baseX + flagW * 0.6 + wave, topY + flagH * 0.15, baseX + flagW + wave, topY + flagH * 0.5);
+    ctx.quadraticCurveTo(baseX + flagW * 0.6 + wave, topY + flagH * 0.85, baseX, topY + flagH);
     ctx.closePath();
     ctx.fill();
+    ctx.strokeStyle = '#a8271f';
+    ctx.lineWidth = 1;
     ctx.stroke();
+
+    ctx.fillStyle = '#caa15a';
+    ctx.beginPath();
+    ctx.arc(baseX, topY, cellSize * 0.06, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   function drawSnake(snake) {

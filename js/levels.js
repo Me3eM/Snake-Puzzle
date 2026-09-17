@@ -32,17 +32,53 @@ function merge(...groups) {
   return Array.from(map.values());
 }
 
+// Ein Block-Pfeiler: eine Spalte von der Oberfläche `ySurface` `depth`
+// Reihen tief nach unten aufgefüllt (Standardtiefe 4 – genug, damit es
+// solide aussieht, ohne den Canvas unnötig zu vergrößern).
+function pillar(x, ySurface, depth) {
+  return vline(ySurface, ySurface + (depth == null ? 4 : depth), x);
+}
+
+// Wie `pillar`, aber über einen ganzen Spaltenbereich (eine ebene Fläche).
+function platform(x1, x2, ySurface, depth) {
+  const cells = [];
+  for (let x = x1; x <= x2; x++) cells.push(...pillar(x, ySurface, depth));
+  return cells;
+}
+
 const LEVELS = [];
 
-// --- Level 1: Erste Schritte (flacher Boden, ein Apfel, Steuerung üben) ---
+// --- Level 1: Erste Schritte ---
+// Großer Rundkurs: sanfte Hügel zum Eingewöhnen, zwei Kletterwände, eine
+// Sprung-Lücke und je ein Stachel-/Säge-Steg, die alle erst mit den
+// unterwegs gefressenen Äpfeln zu schaffen sind, und eine Zieltreppe.
 LEVELS.push({
   name: 'Erste Schritte',
-  solids: hline(0, 14, 6),
-  spikes: [],
-  saws: [],
-  apples: [[6, 5]],
-  start: [[1, 5], [2, 5], [3, 5]],
-  goal: [13, 5],
+  solids: merge(
+    platform(0, 4, 10),
+    pillar(5, 9), pillar(6, 8), pillar(7, 8), pillar(8, 7),
+    pillar(9, 7), pillar(10, 8), pillar(11, 9), pillar(12, 10),
+    platform(13, 18, 10),
+    platform(19, 22, 7),   // Plattform hinter Kletterwand 1 (Höhe 3 -> Apfel 1 nötig)
+    platform(23, 26, 10),  // zurück auf Bodenhöhe
+    // Lücke x=27..30 (Breite 4 -> Apfel 2 nötig)
+    platform(31, 34, 10),
+    pillar(35, 6),           // Kletter-Pfeiler zum Stachelsteg
+    hline(36, 39, 6),        // dünner Steg über der Stachel-Lücke
+    platform(40, 40, 6),     // Landepfeiler
+    platform(41, 44, 10),    // zurück auf Bodenhöhe
+    pillar(45, 5),            // Kletter-Pfeiler zum Sägesteg (Höhe 5 -> Apfel 3 nötig)
+    hline(46, 50, 5),         // dünner Steg über der Säge-Lücke
+    platform(51, 53, 5),      // Landepfeiler
+    pillar(54, 4), pillar(55, 4), pillar(56, 3), pillar(57, 3),
+    pillar(58, 2), pillar(59, 2),
+    platform(60, 63, 2),      // Zielplateau
+  ),
+  spikes: [[37, 10], [38, 10]],
+  saws: [[47, 10], [48, 10], [49, 10]],
+  apples: [[15, 9], [24, 9], [42, 9]],
+  start: [[1, 9], [2, 9], [3, 9]],
+  goal: [62, 1],
 });
 
 // --- Level 2: Der Sprung (hochklettern, dann herunterfallen) ---
@@ -121,5 +157,5 @@ LEVELS.push({
 });
 
 if (typeof module !== 'undefined') {
-  module.exports = { LEVELS, hline, vline, rect, merge };
+  module.exports = { LEVELS, hline, vline, rect, merge, pillar, platform };
 }
